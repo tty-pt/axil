@@ -102,4 +102,7 @@ void ndc_env_clear(int fd);
 int ndc_env_get(int fd, char *target, char *key);
 int ndc_env_put(int fd, char *key, char *value);
 
+void ndc_exec(int cfd, char * const args[],
+		cmd_cb_t callback, void *input,
+		size_t input_len);
 #endif
