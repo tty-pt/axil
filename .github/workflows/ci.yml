@@ -15,7 +15,7 @@ jobs:
       deps_pacman: "libqmap,libndx,openssl"
       deps_rpm: "libqmap,libndx,openssl-devel"
       deps_brew: "libqmap,libndx,openssl"
-      deps_openbsd: "libqmap,libndx,openssl-3.3.2v0"
+      deps_openbsd: "libqmap,libndx,openssl-3.5.4v0"
       publish_to: "deb,apk,pacman,rpm,brew,openbsd"
     secrets:
       HOST: ${{ secrets.OPENBSD_HOST }}
