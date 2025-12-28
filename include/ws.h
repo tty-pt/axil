@@ -4,11 +4,11 @@
 #include <unistd.h>
 #include <stdarg.h>
 
-int ws_init(int fd, char *buf);
-void ws_close(int fd);
-ssize_t ws_read(int fd, void *data, size_t len);
-ssize_t ws_write(int fd, void *data, size_t n);
-int ws_dprintf(int fd, const char *fmt, va_list ap);
-int ws_printf(int fd, const char *fmt, ...);
+int ws_init(socket_t fd, char *buf);
+void ws_close(socket_t fd);
+io_ssize_t ws_read(socket_t fd, void *data, io_size_t len, int flags);
+io_ssize_t ws_write(socket_t fd, void *data, io_size_t n, int flags);
+int ws_dprintf(socket_t fd, const char *fmt, va_list ap);
+int ws_printf(socket_t fd, const char *fmt, ...);
 
 #endif

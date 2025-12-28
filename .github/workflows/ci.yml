@@ -13,10 +13,11 @@ jobs:
       deps: "libqmap,libndx,libssl-dev"
       deps_apk: "libqmap,libndx,openssl-dev"
       deps_pacman: "libqmap,libndx,openssl"
+      deps_pacman_mingw: "mingw-w64-libqmap,mingw-w64-libndx,mingw-w64-openssl"
       deps_rpm: "libqmap,libndx,openssl-devel"
       deps_brew: "libqmap,libndx,openssl"
       deps_openbsd: "libqmap,libndx,openssl-3.5.4v0"
-      publish_to: "deb,apk,pacman,rpm,brew,openbsd"
+      publish_to: "deb,apk,pacman,rpm,brew,openbsd,pacman_mingw"
     secrets:
       HOST: ${{ secrets.OPENBSD_HOST }}
       USER: ${{ secrets.OPENBSD_USER }}
