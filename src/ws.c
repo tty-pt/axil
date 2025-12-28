@@ -1,13 +1,18 @@
 #include "../include/ws.h"
 #include "../include/iio.h"
+
+#ifdef _WIN32
+#include <winsock2.h>
+#include <ws2tcpip.h>
+#else
 #include <arpa/inet.h>
-#include <err.h>
+#endif
+
 #include <errno.h>
 #include <openssl/sha.h>
 #include <openssl/evp.h>
 #include <stdio.h>
 #include <string.h>
-#include <sys/select.h>
 #include <sys/types.h>
 #include <unistd.h>
 #include <ttypt/qsys.h>
@@ -81,8 +86,12 @@ struct ws_frame {
 } frame_map[FD_SETSIZE];
 
 int
-ws_init(int cfd, char *ws_key) {
+ws_init(socket_t cfd, char *ws_key) {
+#ifdef _WIN32
+	fprintf(stderr, "ws_init %lld %s\n", cfd, ws_key);
+#else
 	fprintf(stderr, "ws_init %d %s\n", cfd, ws_key);
+#endif
 	static char common_resp[]
 		= "HTTP/1.1 101 Switching Protocols\r\n"
 		"Upgrade: websocket\r\n"
@@ -103,14 +112,14 @@ ws_init(int cfd, char *ws_key) {
 
 	b64_ntop(hash, SHA_DIGEST_LENGTH, common_resp + 129, 29);
 	memcpy(common_resp + 129 + 28, "\r\n\r\n", 5);
-	io[cfd].lower_write(cfd, common_resp, 129 + 28 + 4);
+	io[cfd].lower_write(cfd, common_resp, 129 + 28 + 4, 0);
 	memset(&frame_map[cfd], 0, sizeof(struct ws_frame));
 	ws_flags[cfd] = WS_BINARY | WS_FIN;
 	return 0;
 }
 
-ssize_t
-ws_write(int cfd, void *data, size_t n)
+io_ssize_t
+ws_write(socket_t cfd, void *data, io_size_t n, int flags UNUSED)
 {
 	unsigned char head[2];
 	head[0] = (ws_flags[cfd] & (WS_BINARY | WS_FIN));
@@ -137,20 +146,20 @@ ws_write(int cfd, void *data, size_t n)
 	}
 
 	memcpy(frame + len, data, n);
-	return io[cfd].lower_write(cfd, frame, len + n) < (ssize_t) (len + n);
+	return io[cfd].lower_write(cfd, frame, len + n, 0) < (ssize_t) (len + n);
 }
 
 void
-ws_close(int cfd) {
+ws_close(socket_t cfd) {
 	unsigned char head[2] = { 0x88, 0x02 };
 	unsigned code = 1008;
 
-	io[cfd].lower_write(cfd, head, sizeof(head));
-	io[cfd].lower_write(cfd, (char *) &code, sizeof(code));
+	io[cfd].lower_write(cfd, head, sizeof(head), 0);
+	io[cfd].lower_write(cfd, (char *) &code, sizeof(code), 0);
 }
 
-ssize_t
-ws_read(int cfd, void *data, size_t len UNUSED)
+io_ssize_t
+ws_read(socket_t cfd, void *data, io_size_t len UNUSED, int flags UNUSED)
 {
 	struct ws_frame *frame = &frame_map[cfd];
 	uint64_t pl = 0, n, i;
@@ -162,12 +171,16 @@ ws_read(int cfd, void *data, size_t len UNUSED)
 		goto pl;
 
 	errno = 0;
-	n = io[cfd].lower_read(cfd, frame->head, sizeof(frame->head));
+	n = io[cfd].lower_read(cfd, frame->head, sizeof(frame->head), 0);
 	if (n == 0)
 		return 0;
 	if (n != sizeof(frame->head)) {
 		if (errno != EAGAIN)
+#ifdef _WIN32
+			fprintf(stderr, "ws_read %lld: bad frame head size %d\n", cfd, errno);
+#else
 			fprintf(stderr, "ws_read %d: bad frame head size %d\n", cfd, errno);
+#endif
 		goto error;
 	}
 
@@ -178,19 +191,19 @@ pl:	pl = PAYLOAD_LEN(frame->head);
 
 	if (pl == 126) {
 		uint16_t rpl;
-		n = io[cfd].lower_read(cfd, &rpl, sizeof(rpl));
+		n = io[cfd].lower_read(cfd, &rpl, sizeof(rpl), 0);
 		if (n != sizeof(rpl)) {
 			if (errno != EAGAIN)
-				warn("ws_read %d: bad rpl size\n", cfd);
+				WARN("ws_read %d: bad rpl size\n", cfd);
 			goto error;
 		}
 		pl = rpl;
 	} else if (pl == 127) {
 		uint64_t rpl;
-		n = io[cfd].lower_read(cfd, &rpl, sizeof(rpl));
+		n = io[cfd].lower_read(cfd, &rpl, sizeof(rpl), 0);
 		if (n != sizeof(rpl)) {
 			if (errno != EAGAIN)
-				warn("ws_read %d: bad rpl size 2\n", cfd);
+				WARN("ws_read %d: bad rpl size 2\n", cfd);
 			goto error;
 		}
 		pl = rpl;
@@ -198,9 +211,9 @@ pl:	pl = PAYLOAD_LEN(frame->head);
 
 	frame->pl = pl;
 
-mk:	n = io[cfd].lower_read(cfd, frame->mk, sizeof(frame->mk) + pl);
+mk:	n = io[cfd].lower_read(cfd, frame->mk, sizeof(frame->mk) + pl, 0);
 	if (n != sizeof(frame->mk) + pl) {
-		warn("ws_read %d: bad frame mk size\n", cfd);
+		WARN("ws_read %d: bad frame mk size\n", cfd);
 		goto error;
 	}
 
@@ -216,15 +229,15 @@ error:	return -1;
 }
 
 int
-ws_dprintf(int fd, const char *format, va_list ap)
+ws_dprintf(socket_t fd, const char *format, va_list ap)
 {
 	static char buf[BUFSIZ];
 	ws_flags[fd] = WS_BINARY & WS_FIN;
-	return ws_write(fd, buf, vsnprintf(buf, sizeof(buf), format, ap));
+	return ws_write(fd, buf, vsnprintf(buf, sizeof(buf), format, ap), 0);
 }
 
 int
-ws_printf(int fd, const char *format, ...)
+ws_printf(socket_t fd, const char *format, ...)
 {
 	ssize_t len;
 	va_list args;

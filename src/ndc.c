@@ -14,10 +14,10 @@
 NDX_DEF(int, on_ndc_init, int, i);
 NDX_DEF(int, on_ndc_exit, int, i);
 NDX_DEF(int, on_ndc_update, unsigned long long, dt);
-NDX_DEF(int, on_ndc_vim, int, fd, int, argc, char **, argv);
-NDX_DEF(int, on_ndc_command, int, fd, int, argc, char **, argv);
-NDX_DEF(int, on_ndc_connect, int, fd);
-NDX_DEF(int, on_ndc_disconnect, int, fd);
+NDX_DEF(int, on_ndc_vim, socket_t, fd, int, argc, char **, argv);
+NDX_DEF(int, on_ndc_command, socket_t, fd, int, argc, char **, argv);
+NDX_DEF(int, on_ndc_connect, socket_t, fd);
+NDX_DEF(int, on_ndc_disconnect, socket_t, fd);
 
 static inline void
 ndc_ndx_reg(void) {
@@ -35,7 +35,9 @@ void exit_all(int i) {
 	call_on_ndc_exit(i);
 
 	qsys_closelog();
+#ifndef _WIN32
 	sync();
+#endif
 
 	if (i)
 		exit(i);
@@ -82,6 +84,7 @@ main(int argc, char *argv[])
 
 	optind = 1;
 
+#ifndef _WIN32
 	while ((c = getopt(argc, argv, "?dK:k:C:rp:s:"))
 			!= -1)
 	{
@@ -97,6 +100,7 @@ main(int argc, char *argv[])
 		default: break;
 		}
 	}
+#endif
 
 	signal(SIGSEGV, exit_all);
 
@@ -117,7 +121,7 @@ main(int argc, char *argv[])
 	return 0;
 }
 
-char *ndc_auth_check(int fd) {
+char *ndc_auth_check(socket_t fd) {
 	static char user[BUFSIZ];
 	char cookie[ENV_VALUE_LEN], *eq;
 	FILE *fp;
@@ -147,7 +151,7 @@ ndc_update(unsigned long long dt)
 	call_on_ndc_update(dt);
 }
 
-void ndc_vim(int fd, int argc, char *argv[])
+void ndc_vim(socket_t fd, int argc, char *argv[])
 {
 	if (!(ndc_flags(fd) & DF_AUTHENTICATED))
 		return;
@@ -155,17 +159,17 @@ void ndc_vim(int fd, int argc, char *argv[])
 	call_on_ndc_vim(fd, argc, argv);
 }
 
-void ndc_command(int fd, int argc, char *argv[])
+void ndc_command(socket_t fd, int argc, char *argv[])
 {
 	call_on_ndc_command(fd, argc, argv);
 }
 
-int ndc_connect(int fd) {
+int ndc_connect(socket_t fd) {
 	call_on_ndc_connect(fd);
 	return 0;
 }
 
-void ndc_disconnect(int fd) {
+void ndc_disconnect(socket_t fd) {
 	if (!(ndc_flags(fd) & DF_AUTHENTICATED))
 		return;
 
