@@ -1,0 +1,37 @@
+libndc public api
+ndc_tick ok
+ndc_config ok
+ndc_register ok
+ndc_main ok
+ndc_register_handler ok
+ndc_write ok
+ndc_dwritef ok
+ndc_writef ok
+ndc_wall ok
+do_GET ok
+do_POST ok
+do_sh ok
+ndc_pty ok
+ndc_flags ok
+ndc_close ok
+ndc_set_flags ok
+ndc_auth ok
+ndc_cert_add ok
+ndc_certs_add ok
+ndc_mmap ok
+ndc_mmap_iter ok
+ndc_env_clear ok
+ndc_env ok
+ndc_env_get ok
+ndc_env_put ok
+ndc_exec ok
+ndc_execbuf ok
+ndc_update unset
+ndc_vim unset
+ndc_accept unset
+ndc_connect unset
+ndc_disconnect unset
+ndc_command unset
+ndc_flush unset
+ndc_auth_check unset
+errors=0

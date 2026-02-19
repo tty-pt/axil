@@ -106,6 +106,11 @@ main(int argc, char *argv[])
 
 	srand(getpid());
 
+	if (ndc_config.chroot && chdir(ndc_config.chroot) != 0) {
+		fprintf(stderr, "Failed to chdir to %s\n", ndc_config.chroot);
+		return 1;
+	}
+
 	ndc_register("GET", do_GET, CF_NOAUTH | CF_NOTRIM);
 	ndc_register("PRI", do_GET, CF_NOAUTH | CF_NOTRIM);
 	ndc_register("POST", do_POST, CF_NOAUTH | CF_NOTRIM);
