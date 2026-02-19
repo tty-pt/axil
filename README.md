@@ -12,7 +12,7 @@ And also: A web-accessible terminal multiplexer! And one you can customize. It's
 ## Installation
 > Check out [these instructions](https://github.com/tty-pt/ci/blob/main/docs/install.md#install-ttypt-packages).
 
-## Run
+## Quick start
 ```sh
 # Find out about flags
 ndc --help
@@ -24,6 +24,12 @@ ndc -d -p 8888
 sudo ndc -C . -K certs.txt -d
 ```
 
+CLI gist:
+```sh
+ndc -d -p 8888
+ndc -d -K certs.txt
+```
+
 ### certs.txt
 This is a file in this format:
 ```txt
@@ -31,7 +37,7 @@ example.com:cert.pem:key.pem
 ```
 That's domain, fullchain certificate and key.
 
-## CGI
+## Static, CGI, autoindex
 You can serve static files using ndc and you can also serve dynamic pages.
 
 Try putting this index.sh file where you run ndc:
@@ -43,6 +49,12 @@ echo Content-Type: text/plain
 echo
 echo Hello world
 ```
+
+Autoindex and static allowlists are controlled by `serve.allow` and `serve.autoindex`.
+On Windows, POSIX-only features (PTY, CGI, autoindex, passwd auth, mmap)
+are not implemented and behave as no-ops.
+
+Non-root note: CGI runs without privilege drop when ndc is not started as root.
 
 ## NPM for easy terminal
 ```js
@@ -60,5 +72,15 @@ In your index.html head, add:
 <link href="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/css/xterm.min.css" rel="stylesheet">
 ```
 
-## C Website?
-Well, this is for the future, but I'm working on it.
+## Man pages
+- `man/ndc.1`
+- `man/ndc.3`
+
+## Docs
+Use the man pages for complete CLI and library documentation:
+```sh
+man ndc
+man ndc.3
+```
+
+CLI entry point: `src/ndc.c` (native), `ndc-cli.js` (npm wrapper).

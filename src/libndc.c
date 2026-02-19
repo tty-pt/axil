@@ -1,13 +1,13 @@
 #define _XOPEN_SOURCE 700
 #define _DARWIN_C_SOURCE 1
-#define _BSD_SOURCE 1
-#define BSD_COMP 1
+#define _DEFAULT_SOURCE 1
 #define _GNU_SOURCE 1
 
 #include <stdio.h>
 
 #include "../include/ttypt/ndc.h"
 #include "../include/iio.h"
+#include "ndc-internal.h"
 
 #include <ctype.h>
 #include <errno.h>
@@ -85,35 +85,12 @@
 		if (!FD_ISSET(di_i, &fds_read) || !(descr_map[di_i].flags & DF_CONNECTED)) continue; \
 		else
 
-#define TELNET_CMD(...) { \
-	unsigned char command[] = { __VA_ARGS__ }; \
-	ndc_write(fd, command, sizeof(command)); \
-}
 
 #define FIRST_INPUT_SIZE (BUFSIZ * 2)
 #define SELECT_TIMEOUT 10000
 #define EXEC_TIMEOUT 1000
 
-struct descr {
-	SSL *cSSL;
-	socket_t fd;
-	int flags, pty, epid;
-	char username[BUFSIZ];
-	char *remaining;
-	struct sockaddr_in addr;
-	size_t remaining_size, remaining_len, remaining_off;
-	time_t sor; // start of request
-	int pipes[3], pipes_mask;
-	cmd_cb_t callback;
-	size_t total;
-#ifndef _WIN32
-	struct winsize wsz;
-	struct termios tty;
-	struct passwd pw;
-	int pid;
-#endif
-	unsigned env_hd;
-} descr_map[FD_SETSIZE];
+struct descr descr_map[FD_SETSIZE];
 
 struct cmd {
 	int fd;
@@ -137,17 +114,7 @@ ndc_cb_t do_GET, do_POST, do_sh;
 static unsigned char *input;
 static size_t input_size = FIRST_INPUT_SIZE, input_len = 0;
 
-static char *cgi_index = "./index.sh";
-#ifndef _WIN32
-static char *statics_mmap;
-static size_t statics_len = 0;
-
-static char *autoindex_mmap;
-static size_t autoindex_len = 0;
-
-struct passwd ndc_pw;
-#endif
-
+static char cgi_index[] = "./index.sh";
 struct timeval select_timeout, exec_timeout;
 
 struct io io[FD_SETSIZE];
@@ -155,13 +122,15 @@ struct io io[FD_SETSIZE];
 struct ndc_config ndc_config;
 socket_t srv_ssl_fd = -1, srv_fd = -1;
 
-static int ndc_srv_flags = 0;
+int ndc_srv_flags = 0;
 static unsigned cmds_hd;
-static fd_set fds_read, fds_active, fds_write, fds_wactive;
+fd_set fds_read, fds_active, fds_write, fds_wactive;
 long long dt, tack = 0;
 SSL_CTX *default_ssl_ctx;
 long long ndc_tick;
 int do_cleanup = 1;
+
+char ndc_execbuf[BUFSIZ * 64];
 
 char *domain_default = NULL;
 unsigned cert_hd, mime_hd, hdlr_hd; 
@@ -177,15 +146,12 @@ ndc_env_clear(socket_t fd)
 		qmap_del(d->env_hd, key);
 }
 
-#ifndef _WIN32
-void
-pw_free(struct passwd *target)
+unsigned
+ndc_env(socket_t fd)
 {
-	free(target->pw_name);
-	free(target->pw_shell);
-	free(target->pw_dir);
+	return descr_map[fd].env_hd;
 }
-#endif
+
 
 void
 ndc_close(socket_t fd)
@@ -201,21 +167,8 @@ ndc_close(socket_t fd)
 	if (d->flags & DF_WEBSOCKET)
 		ws_close(fd);
 
-#ifndef _WIN32
-	if (d->flags & DF_AUTHENTICATED)
-		pw_free(&d->pw);
-
-	if (d->pty > 0) {
-		if (d->pid > 0)
-			kill(-d->pid, SIGKILL);
-		d->pid = -1;
-		FD_CLR(d->pty, &fds_active);
-		FD_CLR(d->pty, &fds_read);
-		descr_map[d->pty].pty = -1;
-		close(d->pty);
-		d->pty = -1;
-	}
-#endif
+	if (ndc_platform && ndc_platform->cleanup_descr)
+		ndc_platform->cleanup_descr(d);
 
 	if (d->cSSL) {
 		SSL_shutdown(d->cSSL);
@@ -585,25 +538,6 @@ cmd_proc(socket_t fd, int argc, char *argv[])
 		ndc_flush(fd, argc, argv);
 }
 
-#ifndef _WIN32
-static void
-ndc_tty_update(socket_t fd)
-{
-	struct descr *d = &descr_map[fd];
-	struct termios last = d->tty;
-
-	if ((last.c_lflag & ECHO) != (d->tty.c_lflag & ECHO))
-		TELNET_CMD(IAC, d->tty.c_lflag & ECHO ? WILL : WONT, TELOPT_ECHO);
-
-	if ((last.c_lflag & ICANON) != (d->tty.c_lflag & ICANON))
-		TELNET_CMD(IAC, d->tty.c_lflag & ICANON ? WONT : WILL, TELOPT_SGA);
-
-	tcgetattr(d->pty, &d->tty);
-	tcflush(d->pty, TCIFLUSH);
-}
-
-#endif
-
 static inline int
 cmd_parse(socket_t fd, char *cmd, size_t len)
 {
@@ -632,42 +566,11 @@ cmd_parse(socket_t fd, char *cmd, size_t len)
 static inline void
 pty_open(socket_t fd)
 {
-#ifndef _WIN32
-	struct descr *d = &descr_map[fd];
+	TELNET_CMD(fd, IAC, WILL, TELOPT_ECHO);
+	TELNET_CMD(fd, IAC, WONT, TELOPT_SGA);
 
-	d->tty.c_lflag = ICANON | ECHO | ECHOK | ECHOCTL;
-	d->tty.c_iflag = IGNCR;
-	d->tty.c_iflag &= ~ICRNL;
-	d->tty.c_iflag &= ~INLCR;
-	d->tty.c_oflag |= OPOST | ONLCR;
-	d->tty.c_oflag &= ~OCRNL;
-
-	CBUG(fcntl(fd, F_SETFL, O_NONBLOCK) == -1,
-			"pty_open fcntl F_SETFL O_NONBLOCK\n");
-
-	d->pty = posix_openpt(O_RDWR | O_NOCTTY);
-
-	/* fprintf(stderr, "pty_open %d %d\n", fd, d->pty); */
-
-	CBUG(d->pty == -1, "pty_open posix_openpt\n");
-	CBUG(grantpt(d->pty), "pty_open grantpt\n");
-	CBUG(unlockpt(d->pty), "pty_open unlockpt\n");
-
-	descr_map[d->pty].fd = fd;
-	descr_map[d->pty].pty = -1;
-
-	tcsetattr(d->pty, TCSANOW, &d->tty);
-#endif
-
-	TELNET_CMD(IAC, WILL, TELOPT_ECHO);
-	TELNET_CMD(IAC, WONT, TELOPT_SGA);
-
-#ifndef _WIN32
-	ndc_tty_update(fd);
-
-	if (d->wsz.ws_col || d->wsz.ws_row)
-		ioctl(d->pty, TIOCSWINSZ, &d->wsz);
-#endif
+	if (ndc_platform && ndc_platform->pty_open)
+		ndc_platform->pty_open(fd);
 }
 
 static int
@@ -705,20 +608,10 @@ descr_read(socket_t fd)
 		i = 0;
 
 	while (i < ret && input[i + 0] == IAC) if (input[i + 1] == SB && input[i + 2] == TELOPT_NAWS) {
-#ifndef _WIN32
-		unsigned char colsHighByte = input[i + 3];
-		unsigned char colsLowByte = input[i + 4];
-		unsigned char rowsHighByte = input[i + 5];
-		unsigned char rowsLowByte = input[i + 6];
-
-		memset(&d->wsz, 0, sizeof(d->wsz));
-		d->wsz.ws_col = (colsHighByte << 8) | colsLowByte;
-		d->wsz.ws_row = (rowsHighByte << 8) | rowsLowByte;
-
-		if (d->pty > 0)
-			ioctl(d->pty, TIOCSWINSZ, &d->wsz);
-#endif
-		i += 9;
+		int skip = 9;
+		if (ndc_platform && ndc_platform->handle_naws)
+			skip = ndc_platform->handle_naws(fd, input + i);
+		i += skip;
 	} else if (input[i + 1] == DO && input[i + 2] == TELOPT_SGA) {
 		/* this must change pty tty settings as well. Not just reply */
 		/* TELNET_CMD(IAC, WONT, TELOPT_ECHO, IAC, WILL, TELOPT_SGA); */
@@ -734,61 +627,14 @@ descr_read(socket_t fd)
 	else
 		i++;
 
-#ifndef _WIN32
-	if (d->pid > 0 && i < ret) {
-		write(d->pty, input + i, ret);
-		return 0;
+	if (ndc_platform && ndc_platform->pty_write_input) {
+		if (ndc_platform->pty_write_input(fd, input, i, ret))
+			return 0;
 	}
-#endif
 
 	return cmd_parse(fd, (char *) input, ret);
 }
 
-#ifndef _WIN32
-static int
-pty_read(socket_t fd)
-{
-	struct descr *d = &descr_map[fd];
-	static char buf[BUFSIZ * 4];
-	int ret = -1, status;
-
-	errno = 0;
-	/* if (waitpid(d->pid, NULL, WNOHANG) > 0) { */
-	/* 	if (errno == EAGAIN) */
-	/* 		ret = 0; */
-	/* 	else */
-	/* 		goto close; */
-	/* }; */
-
-	memset(buf, 0, sizeof(buf));
-	errno = 0;
-	ret = read(d->pty, buf, sizeof(buf));
-
-	switch (ret) {
-		case 0:
-			if (d->pid > 0 && waitpid(d->pid, &status, WNOHANG) == 0)
-				return 0;
-			break;
-		case -1:
-			if (errno == EAGAIN || errno == EIO)
-				return 0;
-			return -1;
-		default:
-			buf[ret] = '\0';
-			ndc_write(fd, buf, ret);
-			ndc_tty_update(fd);
-			return ret;
-	}
-
-	if (d->pid > 0)
-		kill(d->pid, SIGKILL);
-
-	d->pid = -1;
-	return ret;
-}
-
-int ndc_exec_loop(socket_t cfd);
-#endif
 
 static inline void
 descr_proc_writes(void)
@@ -808,11 +654,9 @@ descr_proc_writes(void)
 		if (d->remaining_len)
 			ndc_write_remaining(i);
 
-#ifndef _WIN32
 		// i is not a pty fd!
-		if (d->epid)
-			ndc_exec_loop(i);
-#endif
+		if (d->epid && ndc_platform && ndc_platform->exec_loop)
+			ndc_platform->exec_loop(i);
 	}
 }
 
@@ -830,14 +674,12 @@ descr_proc_reads(void)
 		else if (i == srv_ssl_fd)
 			descr_new(1);
 
-#ifndef _WIN32
 		// i is a pty fd
-		if (d->pty == -2) {
-			if (pty_read(d->fd) < 0)
+		if (d->pty == -2 && ndc_platform && ndc_platform->pty_read) {
+			if (ndc_platform->pty_read(d->fd) < 0)
 				FD_CLR(i, &fds_active);
 			continue;
 		}
-#endif
 
 		// i is not a pty fd!
 		if (!d->epid && descr_read(i) < 0)
@@ -978,57 +820,6 @@ ndc_register(char *name, ndc_cb_t *cb, int flags)
 	qmap_put(cmds_hd, name, &cmd);
 }
 
-#ifndef _WIN32
-ssize_t
-ndc_mmap(char **mapped, char *file)
-{
-	int fd = open(file, O_RDONLY);
-
-	if (fd < 0)
-		return 0;
-
-	struct stat sb;
-	if (fstat(fd, &sb) == -1) {
-		close(fd);
-		return 0;
-	}
-
-	size_t file_size = sb.st_size;
-	if (!file_size) {
-		close(fd);
-		return 0;
-	}
-
-	*mapped = mmap(NULL, file_size, PROT_READ | PROT_WRITE, MAP_PRIVATE, fd, 0);
-	close(fd);
-
-	if (*mapped == MAP_FAILED)
-		return 0;
-
-	return file_size;
-}
-
-char *
-ndc_mmap_iter(char *start, size_t *pos_r)
-{
-	char *line = start + *pos_r;
-	char *line_end = strchr(line, '\n');
-	if (line_end)
-		*line_end = '\0';
-	*pos_r += strlen(line) + 1;
-	return line;
-}
-
-void
-pw_copy(struct passwd *target, struct passwd *origin)
-{
-	*target = *origin;
-	target->pw_name = strdup(origin->pw_name);
-	target->pw_shell = strdup(origin->pw_shell);
-	target->pw_dir = strdup(origin->pw_dir);
-	target->pw_passwd = NULL;
-}
-#endif
 
 static inline void mime_put(char *key, char *value) {
 	qmap_put(mime_hd, key, value);
@@ -1042,20 +833,10 @@ extern int chroot(const char *path);
 static void
 ndc_init(void)
 {
-#ifndef _WIN32
-	char euname[BUFSIZ] = "root";
-	int euid = 0;
-#endif
-
 	ndc_srv_flags |= ndc_config.flags | NDC_WAKE;
 
 	if ((ndc_srv_flags & NDC_DETACH))
 		qsyslog = qsys_syslog;
-
-#ifndef _WIN32
-	strncpy(euname, getpwuid(geteuid())->pw_name, sizeof(euname));
-	pw_copy(&ndc_pw, getpwnam(euname));
-#endif
 
 	if (ndc_srv_flags & NDC_SSL) {
 
@@ -1073,19 +854,8 @@ ndc_init(void)
 		ERR_print_errors_cb(openssl_error_callback, NULL);
 	}
 
-#ifndef _WIN32
-	euid = geteuid();
-	if (euid && !ndc_config.chroot)
-		ndc_config.chroot = ".";
-	if (!ndc_config.chroot) {
-		WARN("Running from cwd\n");
-	} else if (!geteuid()) {
-		CBUG(chroot(ndc_config.chroot), "chroot\n");
-		CBUG(chdir("/"), "chdir\n");
-	} else
-		CBUG(chdir(ndc_config.chroot),
-				"ndc_main chdir2\n");
-#endif
+	if (ndc_platform && ndc_platform->init_pre_bind)
+		ndc_platform->init_pre_bind();
 
 	mime_put("html", "text/html");
 	mime_put("txt", "text/plain");
@@ -1094,12 +864,6 @@ ndc_init(void)
 
 	signal(SIGTERM, sig_shutdown);
 	signal(SIGINT, sig_shutdown);
-#ifndef _WIN32
-	signal(SIGPIPE, SIG_IGN);
-	signal(SIGHUP, SIG_IGN);
-	statics_len = ndc_mmap(&statics_mmap, "./serve.allow");
-	autoindex_len = ndc_mmap(&autoindex_mmap, "./serve.autoindex");
-#endif
 	atexit(cleanup);
 
 	input = malloc(input_size);
@@ -1113,11 +877,9 @@ ndc_init(void)
 	exec_timeout.tv_usec = EXEC_TIMEOUT % 1000000;
 	select_timeout.tv_sec = SELECT_TIMEOUT / 1000000;
 	select_timeout.tv_usec = SELECT_TIMEOUT % 1000000;
-	
-#ifndef _WIN32
-	if ((ndc_srv_flags & NDC_DETACH) && daemon(1, 1) != 0)
-		exit(EXIT_SUCCESS);
-#endif
+
+	if (ndc_platform && ndc_platform->init_post_bind)
+		ndc_platform->init_post_bind();
 }
 
 int
@@ -1171,152 +933,6 @@ ndc_main(void)
 	return 0;
 }
 
-#ifndef _WIN32
-
-static struct passwd *
-drop_priviledges(socket_t fd)
-{
-	struct descr *d = &descr_map[fd];
-
-	struct passwd *pw = (d->flags & DF_AUTHENTICATED)
-		? &d->pw : &ndc_pw;
-
-	if (!ndc_config.chroot) {
-		WARN("NOT_CHROOTED - running with %s\n", pw->pw_name);
-		return pw;
-	}
-	
-	CBUG(!pw, "getpwnam\n");
-	CBUG(setgroups(0, NULL), "setgroups\n");
-	CBUG(initgroups(pw->pw_name, pw->pw_gid), "initgroups\n");
-	CBUG(setgid(pw->pw_gid), "setgid\n");
-	CBUG(setuid(pw->pw_uid), "setuid\n");
-
-	return pw;
-}
-
-#endif
-
-static inline char **
-env_prep(socket_t fd)
-{
-	struct descr *d = &descr_map[fd];
-	char **env = malloc(ENV_MASK * sizeof(char *));
-	unsigned cur;
-	size_t count = 0;
-	const void *key, *value;
-
-	cur = qmap_iter(d->env_hd, NULL, 0);
-	while (qmap_next(&key, &value, cur)) {
-		char *envstr = malloc(ENV_LEN);
-		env[count++] = envstr;
-		snprintf(envstr, ENV_LEN, "%s=%s",
-				(char *) key,
-				(char *) value);
-	}
-
-	env[count] = NULL;
-
-	return env;
-}
-
-#ifndef _WIN32
-
-inline static int
-command_pty(socket_t cfd, struct winsize *ws, char * const args[])
-{
-	struct descr *d = &descr_map[cfd];
-	pid_t p;
-
-	/* fprintf(stderr, "command_pty WILL EXEC %s\n", args[0]); */
-	FD_SET(d->pty, &fds_active);
-	descr_map[d->pty].pty = -2;
-
-	p = fork();
-	if(p == 0) { /* child */
-		do_cleanup = 0;
-
-		struct descr *d = &descr_map[cfd];
-		CBUG(setsid() == -1, "setsid\n");
-
-		CBUG(!(d->flags & DF_AUTHENTICATED),
-				"NOT AUTHENTICATED\n");
-
-		int slave_fd = open(ptsname(d->pty), O_RDWR);
-		CBUG(slave_fd == -1,
-				"open %d\n",
-				errno);
-
-		struct passwd *pw = drop_priviledges(cfd);
-
-		int pflags = fcntl(slave_fd, F_GETFL, 0);
-		CBUG(pflags == -1, "pflags -1\n");
-
-		close(d->pty);
-
-		CBUG(ioctl(slave_fd, TIOCSCTTY, NULL) == -1,
-				"ioctl TIOCSCTTY\n");
-
-		CBUG(ioctl(slave_fd, TIOCSWINSZ, ws) == -1,
-				"ioctl TIOCSWINSZ\n");
-
-		CBUG(fcntl(slave_fd, F_SETFD, FD_CLOEXEC) == -1,
-				"fcntl srv_fd F_SETFL FD_CLOEXEC\n");
-
-		CBUG(dup2(slave_fd, STDIN_FILENO) == -1,
-				"dup2 STDIN\n");
-		CBUG(dup2(slave_fd, STDOUT_FILENO) == -1,
-				"dup2 STDOUT\n");
-		CBUG(dup2(slave_fd, STDERR_FILENO) == -1,
-				"dup2 STDERR\n");
-
-		char *alt_args[] = { pw->pw_shell, NULL };
-		char * const *real_args = args[0] ? args : alt_args;
-		char home[BUFSIZ], user[BUFSIZ], shell[BUFSIZ];
-		snprintf(home, sizeof(home), "HOME=%s", d->pw.pw_dir);
-		snprintf(user, sizeof(user), "USER=%s", d->pw.pw_name);
-		snprintf(shell, sizeof(shell), "SHELL=%s", d->pw.pw_shell);
-
-		char * const env[] = {
-			"PATH=/bin:/usr/bin:/usr/local/bin",
-			"LD_LIBRARY_PATH=/lib:/usr/lib:/usr/local/lib",
-			home,
-			user,
-			shell,
-			NULL,
-		};
-
-		execve(real_args[0], real_args, env);
-		CBUG(1, "execve\n");
-	}
-
-	return p;
-}
-
-
-void
-ndc_pty(socket_t fd, char * const args[])
-{
-	struct descr *d = &descr_map[fd];
-
-	/* fprintf(stderr, "ndc_pty %s %d pty %d SGA %d ECHO %d\n", */
-	/* 		args[0], fd, d->pty, WONT, WILL); */
-
-	d->pid = command_pty(fd, &d->wsz, args);
-	FD_SET(d->pty, &fds_active);
-
-	/* fprintf(stderr, "PTY master fd: %d\n", d->pty); */
-}
-
-void
-do_sh(socket_t fd, int argc UNUSED, char *argv[] UNUSED)
-{
-	char *args[] = { NULL, NULL };
-	ndc_pty(fd, args);
-}
-
-#endif
-
 static char *
 env_name(char *key)
 {
@@ -1362,204 +978,6 @@ headers_get(socket_t fd, size_t *body_start, char *next_lines)
 	*body_start = s - next_lines;	
 }
 
-#ifndef _WIN32
-static inline int
-popen2(socket_t cfd, char * const args[])
-{
-	struct descr *d = &descr_map[cfd];
-	pid_t p = -1;
-	int pipe_stdin[2], pipe_stdout[2], pipe_stderr[2];
-
-	if (pipe(pipe_stdin) \
-			|| pipe(pipe_stdout) \
-			|| pipe(pipe_stderr) \
-			|| (p = fork()) < 0)
-		return p;
-
-	if(p == 0) { /* child */
-		drop_priviledges(cfd);
-		do_cleanup = 0;
-		close(pipe_stdin[1]);
-		dup2(pipe_stdin[0], 0);
-		close(pipe_stdout[0]);
-		dup2(pipe_stdout[1], 1);
-		close(pipe_stderr[0]);
-		dup2(pipe_stderr[1], 2);
-		setpgid(0, 0);
-
-		char * const *env = env_prep(cfd);
-		execve(args[0], args, env);
-		CBUG(1, "execve\n");
-	}
-
-	d->pipes[0] = pipe_stdin[1];
-	d->pipes[1] = pipe_stdout[0];
-	d->pipes[2] = pipe_stderr[0];
-	close(pipe_stdin[0]);
-	close(pipe_stdout[1]);
-	close(pipe_stderr[1]);
-	return p;
-}
-
-static inline
-ssize_t cb_proc(socket_t fd, int pfd,
-		cmd_cb_t callback)
-{
-	char ndc_execbuf[BUFSIZ * 64];
-
-	struct descr *d = &descr_map[fd];
-	memset(ndc_execbuf, 0, sizeof(ndc_execbuf));
-	ssize_t len;
-	int ofd;
-
-	*ndc_execbuf = '\0';
-
-	ofd = pfd == d->pipes[1];
-	len = read(pfd, ndc_execbuf, sizeof(ndc_execbuf) - 1);
-	if (len > 0) {
-		ndc_execbuf[len] = '\0';
-		callback(fd, ndc_execbuf, len, ofd);
-	} else if (len < 0) {
-		if (errno != EAGAIN)
-			ERR("read\n");
-		return -1;
-	}
-
-	// stop iteration if output receives 0
-	return len;
-}
-
-int
-ndc_exec_loop(int cfd)
-{
-	struct descr *d = &descr_map[cfd];
-	fd_set read_fds;
-	int ready_fds, total_timeout = 40 /* should be a config option */, ret = 0;
-	ssize_t len = 0;
-
-	d->flags &= ~DF_TO_CLOSE;
-
-	do {
-		struct timeval timeout;
-		memcpy(&timeout, &exec_timeout, sizeof(timeout));
-		int pfd;
-		time_t dt;
-
-		if (!d->pipes_mask)
-			break;
-
-		dt = time(NULL) - d->sor;
-
-		if (dt >= total_timeout) {
-			ndc_writef(cfd, "504 Gateway Timeout\r\n"
-					"Content-Type: text/plain\r\n"
-					"Content-Length: 26\r\n"
-					"\r\n"
-					"Code 504: Gateway Timeout\n");
-			ERR("Timeout! %u\n", cfd);
-			break;
-		}
-
-		FD_ZERO(&read_fds);
-		if (d->pipes_mask & 1)
-			FD_SET(d->pipes[1], &read_fds);
-		if (d->pipes_mask & 2)
-			FD_SET(d->pipes[2], &read_fds);
-
-		ready_fds = select(d->pipes[1] + 1, &read_fds, NULL, NULL, &timeout);
-
-		if (!ready_fds)
-			return 1;
-
-		if (ready_fds == -1) {
-			ERR("select %d\n", errno);
-			break;
-		}
-
-		if (FD_ISSET(d->pipes[1], &read_fds))
-			pfd = d->pipes[1];
-		else if (FD_ISSET(d->pipes[2], &read_fds))
-			pfd = d->pipes[2];
-		else
-			continue;
-
-		errno = 0;
-		len = cb_proc(cfd, pfd, d->callback);
-
-		if (len > 0) {
-			d->total += len;
-			return 1;
-		}
-
-		if (errno == EAGAIN || errno == EWOULDBLOCK) {
-			FD_SET(cfd, &fds_active);
-			FD_SET(cfd, &fds_read);
-			return 1;
-		}
-
-		if (pfd == d->pipes[1]) {
-			d->pipes_mask &= ~1;
-			break;
-		} else
-			d->pipes_mask &= ~2;
-
-	} while (d->pipes_mask);
-
-	if (d->total == 0) {
-		char ndc_execbuf[BUFSIZ * 64];
-		read(d->pipes[2], ndc_execbuf, sizeof(ndc_execbuf) - 1);
-		ERR("%s\n", ndc_execbuf);
-		ndc_writef(cfd, "500 Internal Server Error\r\n"
-				"Content-Type: text/plain\r\n"
-				"Content-Length: %ld\r\n"
-				"\r\n"
-				"Code 500: Internal Server Error:\n%s\n", strlen(ndc_execbuf) + 37, ndc_execbuf);
-		ret = -1;
-	} else {
-		len = cb_proc(cfd, d->pipes[2], d->callback);
-	}
-
-	close(d->pipes[1]);
-	close(d->pipes[2]);
-	kill(-d->epid, SIGKILL);
-	waitpid(d->epid, NULL, 0);
-	d->epid = 0;
-	memset(d->pipes, 0, sizeof(d->pipes));
-	FD_CLR(cfd, &fds_wactive);
-
-	d->flags |= DF_TO_CLOSE;
-	if (!d->remaining_len)
-		ndc_close(cfd);
-
-	return ret;
-}
-
-void
-ndc_exec(int cfd, char * const args[],
-		cmd_cb_t callback, void *input,
-		size_t input_len)
-{
-	struct descr *d = &descr_map[cfd];
-	int flags;
-
-	d->epid = popen2(cfd, args); // should assert it doesn't equal 0
-	d->pipes_mask = 3;
-
-	flags = fcntl(d->pipes[1], F_GETFL, 0);
-	fcntl(d->pipes[1], F_SETFL, flags | O_NONBLOCK);
-	flags = fcntl(d->pipes[2], F_GETFL, 0);
-	fcntl(d->pipes[2], F_SETFL, flags | O_NONBLOCK);
-
-	if (input)
-		write(d->pipes[0], input, input_len);
-	close(d->pipes[0]);
-
-	d->sor = time(NULL);
-	d->total = 0;
-	d->callback = callback;
-	FD_SET(cfd, &fds_wactive);
-}
-#endif
 
 void
 do_GET_cb(int fd, char *buf, size_t len, int ofd)
@@ -1605,54 +1023,6 @@ env_sane(char *str)
 	return buf;
 }
 
-#ifndef _WIN32
-static void
-ndc_auth_try(int fd)
-{
-	if (!ndc_auth_check)
-		return;
-	char *user = ndc_auth_check(fd);
-	if (user)
-		ndc_auth(fd, user);
-}
-
-inline static char *
-static_allowed(const char *path, struct stat *stat_buf)
-{
-	static char output[BUFSIZ];
-	char *rstart = statics_mmap, *start, *out = NULL;
-	size_t pos = 0;
-	if (!statics_mmap)
-		return NULL;
-
-	do {
-		start = ndc_mmap_iter(rstart, &pos);
-		char *glob = strchr(start, ' ');
-		if (!glob)
-			break;
-		if (fnmatch(glob + 1, path, 0) == 0) {
-			register char aux = *glob,
-				 *aster = strchr(glob + 1, '*');
-
-			CBUG(!aster, "No asterisk on serve.allow\n");
-
-			size_t offset = aster - 1 - glob;
-			aux = *glob;
-			*glob = '\0';
-			size_t len = snprintf(output, sizeof(output), "./%s/%s", start, path + offset);
-			*glob = aux;
-			if (output[len - 1] != '/') {
-				if (stat(output, stat_buf))
-					continue;
-				out = output;
-				break;
-			}
-		}
-	} while (pos < statics_len);
-
-	return out;
-}
-#endif
 
 int
 ndc_env_get(socket_t fd, char *target, char *key)
@@ -1672,9 +1042,6 @@ _env_prep(socket_t fd, char *document_uri,
 		char *param, char *method)
 {
 	char req_content_type[BUFSIZ];
-#ifndef _WIN32
-	struct descr *d = &descr_map[fd];
-#endif
 
 	if (ndc_env_get(fd, req_content_type, "HTTP_CONTENT_TYPE"))
 		strncpy(req_content_type, "text/plain", sizeof(req_content_type));
@@ -1685,13 +1052,11 @@ _env_prep(socket_t fd, char *document_uri,
 	ndc_env_put(fd, "QUERY_STRING", env_sane(param));
 	ndc_env_put(fd, "REQUEST_METHOD", method);
 	ndc_env_put(fd, "SCRIPT_NAME", cgi_index + 1);
-#ifndef _WIN32
-	ndc_env_put(fd, "DOCUMENT_ROOT", geteuid() ? ndc_config.chroot : "");
-	ndc_env_put(fd, "HOME", d->pw.pw_dir);
-#endif
+	if (ndc_platform && ndc_platform->env_prep)
+		ndc_platform->env_prep(fd);
 }
 
-static inline void
+static void
 static_write(socket_t fd, char *status, const char *content_type,
 		int want_fd, off_t total)
 {
@@ -1745,12 +1110,9 @@ request_handle_static(socket_t fd, char *document_uri,
 		document_uri = buf;
 	}
 
-	char *filename
-#ifdef _WIN32
-		= NULL;
-#else
-		= static_allowed(document_uri, stat_buf);
-#endif
+	char *filename = NULL;
+	if (ndc_platform && ndc_platform->static_allowed)
+		filename = ndc_platform->static_allowed(document_uri, stat_buf);
 
 	if (!filename)
 		return 0;
@@ -1793,7 +1155,7 @@ request_handle_websocket(socket_t fd)
 	d->flags |= DF_WEBSOCKET;
 	dio->read = ws_read;
 	dio->write = ws_write;
-	TELNET_CMD(IAC, DO, TELOPT_NAWS);
+	TELNET_CMD(fd, IAC, DO, TELOPT_NAWS);
 	if (!ndc_connect || ndc_connect(fd)) {
 		d->flags |= DF_CONNECTED;
 		pty_open(fd);
@@ -1802,27 +1164,6 @@ request_handle_websocket(socket_t fd)
 	return 1;
 }
 
-#ifndef _WIN32
-
-static inline void
-request_handle_cgi(socket_t fd, struct stat *stat_buf, char *body)
-{
-	if (stat(cgi_index, stat_buf) || access(cgi_index, X_OK)) {
-		char *status = "404 Not Found";
-		static_write(fd, status, "text/plain",
-				-1, strlen(status));
-		return;
-	}
-
-	char * args[2] = { cgi_index, NULL };
-	ndc_writef(fd, "HTTP/1.1 ");
-
-	ndc_exec(fd, args, do_GET_cb, body, strlen(body));
-
-	ndc_exec_loop(fd);
-}
-
-#endif
 
 static inline int
 request_handle_redirect(socket_t fd, char *document_uri)
@@ -1855,61 +1196,6 @@ request_handle_redirect(socket_t fd, char *document_uri)
 	return 0;
 }
 
-#ifndef _WIN32
-inline static char *
-autoindex_allowed(const char *uri, struct stat *stat_buf)
-{
-	static char fs_path[BUFSIZ];
-	char *rstart, *start, *out = NULL;
-	size_t pos;
-
-	// 1. Find the real filesystem path using serve.allow mappings
-	rstart = statics_mmap;
-	pos = 0;
-	if (!statics_mmap)
-		return NULL;
-
-	do {
-		start = ndc_mmap_iter(rstart, &pos);
-		char *glob = strchr(start, ' ');
-		if (!glob)
-			break;
-		if (fnmatch(glob + 1, uri, 0) == 0) {
-			char aux = *glob;
-			*glob = '\0';
-			snprintf(fs_path, sizeof(fs_path), "./%s%s", start, uri);
-			*glob = aux;
-
-			// We found a mapping. Now check if it's a directory.
-			if (stat(fs_path, stat_buf) == 0 && S_ISDIR(stat_buf->st_mode)) {
-				// It's a valid directory. Now proceed to step 2.
-				out = fs_path;
-				break;
-			}
-		}
-	} while (pos < statics_len);
-
-	if (!out)
-		return NULL; // No valid directory found for this URI
-
-	// 2. Now check if the ORIGINAL URI is approved for auto-indexing
-	rstart = autoindex_mmap;
-	pos = 0;
-	if (!autoindex_mmap)
-		return NULL;
-
-	do {
-		start = ndc_mmap_iter(rstart, &pos);
-		if (fnmatch(start, uri, 0) == 0) {
-			// Success! Return the real filesystem path.
-			return out;
-		}
-	} while (pos < autoindex_len);
-
-	// Not in the autoindex list
-	return NULL;
-}
-#endif
 
 // Generates and sends an HTML directory listing.
 static inline void
@@ -1980,12 +1266,9 @@ request_handle_trailing_slash(socket_t fd, char *document_uri)
     int uri_len = strlen(document_uri);
 
     if (uri_len > 1 && document_uri[uri_len - 1] != '/') {
-        char *fs_path
-#ifdef _WIN32
-		= NULL;
-#else
-		= static_allowed(document_uri, &stat_buf);
-#endif
+		char *fs_path = NULL;
+		if (ndc_platform && ndc_platform->static_allowed)
+			fs_path = ndc_platform->static_allowed(document_uri, &stat_buf);
 
 	if (fs_path && S_ISDIR(stat_buf.st_mode)) {
 		struct descr *d = &descr_map[fd];
@@ -2043,9 +1326,8 @@ request_handle(socket_t fd, int argc, char *argv[], int req_flags)
 
 	headers_get(fd, &body_start, argv[argc]);
 
-#ifndef _WIN32
-	ndc_auth_try(fd);
-#endif
+	if (ndc_platform && ndc_platform->auth_try)
+		ndc_platform->auth_try(fd);
 
 	if (request_handle_trailing_slash(fd, document_uri))
 		return;
@@ -2059,12 +1341,9 @@ request_handle(socket_t fd, int argc, char *argv[], int req_flags)
 	if (request_handle_static(fd, document_uri, &stat_buf))
 		return;
 
-	char *autoindex_path
-#ifdef _WIN32
-		= NULL;
-#else
-		= autoindex_allowed(document_uri, &stat_buf);
-#endif
+	char *autoindex_path = NULL;
+	if (ndc_platform && ndc_platform->autoindex_allowed)
+		autoindex_path = ndc_platform->autoindex_allowed(document_uri, &stat_buf);
 	if (autoindex_path) {
 		request_handle_autoindex(fd, document_uri, autoindex_path);
 		return;
@@ -2077,9 +1356,15 @@ request_handle(socket_t fd, int argc, char *argv[], int req_flags)
 
 	_env_prep(fd, document_uri, param, method);
 
-	const void *key = qmap_get(hdlr_hd, document_uri);
-	ndc_handler_t *hdlr;
-	*((const void **) &hdlr) = key;
+	char path_with_method[BUFSIZ];
+	snprintf(path_with_method, sizeof(path_with_method), "%s:%s", method, document_uri);
+	const void *key = qmap_get(hdlr_hd, path_with_method);
+	if (!key)
+		key = qmap_get(hdlr_hd, document_uri);
+
+	ndc_handler_t *hdlr = NULL;
+	if (key)
+		memcpy(&hdlr, key, sizeof(hdlr));
 
 	if (hdlr) {
 		hdlr(fd, body);
@@ -2091,16 +1376,14 @@ request_handle(socket_t fd, int argc, char *argv[], int req_flags)
 		return;
 	}
 
-#ifndef _WIN32
-	request_handle_cgi(fd, &stat_buf, body);
-#endif
+	if (ndc_platform && ndc_platform->request_handle_cgi)
+		ndc_platform->request_handle_cgi(fd, &stat_buf, body);
 }
 
 void
 ndc_register_handler(char *path, ndc_handler_t handler)
 {
-	void **value = (void **) &handler;
-	qmap_put(hdlr_hd, path, *value);
+	qmap_put(hdlr_hd, path, &handler);
 }
 
 void
@@ -2127,21 +1410,6 @@ ndc_set_flags(socket_t fd, int flags)
 	descr_map[fd].flags = flags;
 }
 
-#ifndef _WIN32
-int
-ndc_auth(socket_t fd, char *username)
-{
-	struct descr *d = &descr_map[fd];
-	/* syserr(LOG_ERR, "ndc_auth %d %s", fd, username); */
-	strncpy(d->username, username, sizeof(d->username));
-	d->flags |= DF_AUTHENTICATED;
-	struct passwd *pw = getpwnam(d->username);
-	if (!pw)
-		return 1;
-	pw_copy(&d->pw, pw);
-	return 0;
-}
-#endif
 
 __attribute__((constructor)) static void
 ndc_pre_init(void)
@@ -2152,10 +1420,11 @@ ndc_pre_init(void)
 
 	unsigned cert_type = qmap_reg(sizeof(cert_t));
 	unsigned cmd_type = qmap_reg(sizeof(struct cmd_slot));
+	unsigned hdlr_type = qmap_reg(sizeof(ndc_handler_t *));
 
 	mime_hd = qmap_open(NULL, NULL, QM_STR, QM_STR, MIME_MASK, 0);
 	cert_hd = qmap_open(NULL, NULL, QM_STR, cert_type, CERT_MASK, 0);
-	hdlr_hd = qmap_open(NULL, NULL, QM_STR, QM_PTR, HDLR_MASK, 0);
+	hdlr_hd = qmap_open(NULL, NULL, QM_STR, hdlr_type, HDLR_MASK, 0);
 	cmds_hd = qmap_open(NULL, NULL, QM_STR, cmd_type, CMD_MASK, 0);
 }
 
@@ -2175,33 +1444,3 @@ _ndc_cert_add(char *domain, char *crt, char *key)
 	if (!domain_default)
 		domain_default = domain;
 }
-
-#ifndef _WIN32
-void
-ndc_cert_add(char *optarg)
-{
-	char *domain = optarg, *crt, *ioc;
-	ioc = strchr(optarg, ':');
-	CBUG(!ioc, "Invalid cert info\n");
-	*ioc = '\0';
-	crt = ioc + 1;
-	ioc = strchr(crt, ':');
-	CBUG(!ioc, "Invalid cert info\n");
-	*ioc = '\0';
-	_ndc_cert_add(domain, crt, ioc + 1);
-	ndc_srv_flags |= NDC_SSL;
-}
-
-
-void
-ndc_certs_add(char *certs_file)
-{
-	char *mapped;
-	size_t file_size = ndc_mmap(&mapped, certs_file);
-	size_t pos = 0;
-
-	do
-		ndc_cert_add(ndc_mmap_iter(mapped, &pos));
-	while (pos < file_size);
-}
-#endif

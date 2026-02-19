@@ -1,0 +1,22 @@
+PROJECT_NAME           = "ndc"
+OUTPUT_LANGUAGE        = English
+OPTIMIZE_OUTPUT_FOR_C  = YES
+EXTRACT_ALL            = NO
+HIDE_UNDOC_MEMBERS     = YES
+HIDE_UNDOC_CLASSES     = YES
+RECURSIVE              = NO
+
+INPUT                  = src/ndc.c
+FILE_PATTERNS          = *.c
+
+GENERATE_MAN           = YES
+MAN_OUTPUT             = man
+MAN_SUBDIR             = .
+MAN_EXTENSION          = 1
+MAN_LINKS              = NO
+
+GENERATE_HTML          = NO
+GENERATE_LATEX         = NO
+GENERATE_RTF           = NO
+GENERATE_XML           = NO
+GENERATE_DOCBOOK       = NO

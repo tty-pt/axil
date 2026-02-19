@@ -1,0 +1,10 @@
+Usage: ./bin/ndc [-dr?] [-C PATH] [-u USER] [-k PATH] [-c PATH] [-p PORT]
+    Options:
+        -C PATH   changes directory to PATH before starting up.
+        -u USER   login as USER before starting up.
+        -k PATH   specify SSL certificate 'key' file
+        -c PATH   specify SSL certificate 'crt' file
+        -p PORT   specify server port
+        -d        don't detach
+        -r        root multiplex mode
+        -?        display this message.
