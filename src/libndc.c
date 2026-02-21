@@ -144,12 +144,84 @@ ndc_env_clear(socket_t fd)
 
 	while (qmap_next(&key, &value, cur))
 		qmap_del(d->env_hd, key);
+
+	d->resp_headers[0] = '\0';
 }
 
 unsigned
 ndc_env(socket_t fd)
 {
 	return descr_map[fd].env_hd;
+}
+
+void
+ndc_header(socket_t fd, const char *key, const char *value)
+{
+	struct descr *d = &descr_map[fd];
+	size_t len = strlen(d->resp_headers);
+	snprintf(d->resp_headers + len, BUFSIZ - len, "%s: %s\r\n", key, value);
+}
+
+void
+ndc_head(socket_t fd, int code)
+{
+	struct descr *d = &descr_map[fd];
+	d->resp_headers[0] = '\0';
+	ndc_writef(fd, "HTTP/1.1 %d %s\r\n", code, ndc_status_text(code));
+}
+
+void
+ndc_body(socket_t fd, const char *body)
+{
+	struct descr *d = &descr_map[fd];
+	ndc_writef(fd, "%s\r\n%s",
+		*d->resp_headers ? d->resp_headers : "",
+		body ? body : "");
+	d->resp_headers[0] = '\0';
+	ndc_close(fd);
+}
+
+void
+ndc_sendfile(socket_t fd, const char *path)
+{
+	int file_fd = open(path, O_RDONLY);
+	if (file_fd < 0) {
+		ndc_head(fd, 404);
+		ndc_body(fd, "404 Not Found");
+		return;
+	}
+
+	struct stat st;
+	if (fstat(file_fd, &st) < 0) {
+		close(file_fd);
+		ndc_head(fd, 500);
+		ndc_body(fd, "500 Internal Server Error");
+		return;
+	}
+
+	char *ext = strrchr(path, '.');
+	char *mime = ext ? (char *)qmap_get(mime_hd, ext + 1) : NULL;
+	if (!mime)
+		mime = "application/octet-stream";
+
+	char *mapped = mmap(NULL, st.st_size, PROT_READ, MAP_PRIVATE, file_fd, 0);
+	close(file_fd);
+
+	if (mapped == MAP_FAILED) {
+		ndc_head(fd, 500);
+		ndc_body(fd, "500 Internal Server Error");
+		return;
+	}
+
+	struct descr *d = &descr_map[fd];
+	ndc_writef(fd, "%sContent-Type: %s\r\nContent-Length: %ld\r\n\r\n",
+		*d->resp_headers ? d->resp_headers : "",
+		mime, (long)st.st_size);
+	ndc_write(fd, mapped, st.st_size);
+	munmap(mapped, st.st_size);
+
+	d->resp_headers[0] = '\0';
+	ndc_close(fd);
 }
 
 
@@ -160,6 +232,11 @@ ndc_close(socket_t fd)
 
 	if (d->remaining_size)
 		free(d->remaining);
+
+	if (*d->resp_headers) {
+		ndc_writef(fd, "%s\r\n", d->resp_headers);
+		d->resp_headers[0] = '\0';
+	}
 
 	if ((d->flags & DF_CONNECTED) && ndc_disconnect)
 		ndc_disconnect(fd);
@@ -197,10 +274,22 @@ cleanup(void)
 		ndc_close(di_i);
 }
 
-static void
-sig_shutdown(int i UNUSED)
+static void sig_shutdown(int sig UNUSED)
 {
-	ndc_srv_flags &= ~NDC_WAKE;
+    ndc_srv_flags &= ~NDC_WAKE;
+}
+
+static void setup_signals(void)
+{
+    struct sigaction sa;
+    memset(&sa, 0, sizeof(sa));
+    sa.sa_handler = sig_shutdown;
+    sigemptyset(&sa.sa_mask);
+    sa.sa_flags = 0;   // IMPORTANTE: sem SA_RESTART
+
+    sigaction(SIGINT, &sa, NULL);
+    sigaction(SIGTERM, &sa, NULL);
+    atexit(cleanup);
 }
 
 static int
@@ -862,9 +951,7 @@ ndc_init(void)
 	mime_put("css", "text/css");
 	mime_put("js", "application/javascript");
 
-	signal(SIGTERM, sig_shutdown);
-	signal(SIGINT, sig_shutdown);
-	atexit(cleanup);
+	setup_signals();
 
 	input = malloc(input_size);
 
@@ -1356,7 +1443,7 @@ request_handle(socket_t fd, int argc, char *argv[], int req_flags)
 
 	_env_prep(fd, document_uri, param, method);
 
-	char path_with_method[BUFSIZ];
+	char path_with_method[16384];
 	snprintf(path_with_method, sizeof(path_with_method), "%s:%s", method, document_uri);
 	const void *key = qmap_get(hdlr_hd, path_with_method);
 	if (!key)

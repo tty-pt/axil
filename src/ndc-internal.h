@@ -37,6 +37,7 @@ struct descr {
 	int pid;
 #endif
 	unsigned env_hd;
+	char resp_headers[BUFSIZ];
 };
 
 extern struct descr descr_map[FD_SETSIZE];

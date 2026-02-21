@@ -31,5 +31,10 @@ _ndc_env_clear
 _ndc_env
 _ndc_env_get
 _ndc_env_put
+_ndc_status_text
+_ndc_head
+_ndc_header
+_ndc_body
+_ndc_sendfile
 _ndc_exec
 _ndc_execbuf

@@ -181,6 +181,21 @@ int ndc_env_get(socket_t fd, char *target, char *key);
 /** Set environment key/value; returns 0 on success. */
 int ndc_env_put(socket_t fd, char *key, char *value);
 
+/** Get HTTP status text for a status code. Returns "Unknown" for invalid codes. */
+const char *ndc_status_text(int code);
+
+/** Set HTTP status line (e.g., 200, 404, 302). Clears accumulated headers. */
+void ndc_head(socket_t fd, int code);
+
+/** Set a response header. Headers are sent when ndc_body/ndc_sendfile is called. */
+void ndc_header(socket_t fd, const char *key, const char *value);
+
+/** Send HTTP body and close the connection. */
+void ndc_body(socket_t fd, const char *body);
+
+/** Serve a static file with auto-detected MIME type. Closes fd on completion. */
+void ndc_sendfile(socket_t fd, const char *path);
+
 /** Execute a command and stream output via callback (POSIX-only).
  * Callback ofd is 1 for stdout, 0 for stderr.
  */

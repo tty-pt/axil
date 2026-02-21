@@ -33,6 +33,11 @@
 		ndc_env;
 		ndc_env_get;
 		ndc_env_put;
+		ndc_status_text;
+		ndc_head;
+		ndc_header;
+		ndc_body;
+		ndc_sendfile;
 		ndc_exec;
 		ndc_execbuf;
 	local:

@@ -19,6 +19,9 @@ libndc-obj-y-Darwin := src/ndc-posix.o
 libndc-obj-y-OpenBSD := src/ndc-posix.o
 libndc-obj-y-Msys := src/ndc-win.o
 libndc-obj-y-MingW := src/ndc-win.o
+libndc-obj-y := src/ndc-status.o
+
+-include ../mk/include.mk
 
 docs: docs-cli
 
@@ -29,5 +32,3 @@ test: all
 	sh ./test.sh
 
 objects-set.mk: Makefile
-
--include ../mk/include.mk
