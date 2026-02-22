@@ -83,4 +83,7 @@ man ndc
 man ndc.3
 ```
 
+## Plugin dependencies
+ndc now bundles the dependency-aware `libndx` host API, so plugin modules can declare `const char *ndx_deps[] = { ... };` and have `ndx_load()` recursively pull in the dependency graph while detecting cycles before any hook runs.
+
 CLI entry point: `src/ndc.c` (native), `ndc-cli.js` (npm wrapper).
