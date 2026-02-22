@@ -33,7 +33,9 @@ main(int argc, char *argv[])
 		}
 	}
 
-	signal(SIGPIPE, SIG_IGN);
+ 	#if defined(SIGPIPE)
+ 		signal(SIGPIPE, SIG_IGN);
+ 	#endif
 
 	ndc_register("GET", do_GET, CF_NOAUTH | CF_NOTRIM);
 	ndc_register("PRI", do_GET, CF_NOAUTH | CF_NOTRIM);

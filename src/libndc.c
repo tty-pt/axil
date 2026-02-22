@@ -281,6 +281,7 @@ static void sig_shutdown(int sig UNUSED)
 
 static void setup_signals(void)
 {
+#if !defined(_WIN32)
     struct sigaction sa;
     memset(&sa, 0, sizeof(sa));
     sa.sa_handler = sig_shutdown;
@@ -289,6 +290,7 @@ static void setup_signals(void)
 
     sigaction(SIGINT, &sa, NULL);
     sigaction(SIGTERM, &sa, NULL);
+#endif
     atexit(cleanup);
 }
 

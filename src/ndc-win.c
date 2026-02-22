@@ -42,9 +42,9 @@ do_sh(socket_t fd, int argc, char *argv[])
 }
 
 void
-ndc_exec(int cfd, char * const args[],
-		cmd_cb_t callback, void *input,
-		size_t input_len)
+ndc_exec(socket_t cfd, char * const args[],
+        cmd_cb_t callback, void *input,
+        size_t input_len)
 {
 	(void)cfd;
 	(void)args;

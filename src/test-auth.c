@@ -77,7 +77,9 @@ main(int argc, char *argv[])
 	ndc_register("PRI", do_GET, CF_NOAUTH | CF_NOTRIM);
 	ndc_register("POST", do_POST, CF_NOAUTH | CF_NOTRIM);
 
-	signal(SIGPIPE, SIG_IGN);
+	#if defined(SIGPIPE)
+		signal(SIGPIPE, SIG_IGN);
+	#endif
 
 	return ndc_main();
 }
