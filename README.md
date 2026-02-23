@@ -19,7 +19,7 @@ Build telnet-like servers, custom protocol handlers, HTTP APIs, WebSocket apps, 
 | Platform | Status |
 |----------|--------|
 | Linux, macOS, BSD | ✅ Full support |
-| Windows | ⚠️ HTTP/WS only (no PTY/CGI/auth) |
+| Windows | ⚠️ HTTP/WS only (no PTY/CGI/privilege dropping) |
 
 ## Quick Start
 
@@ -149,7 +149,7 @@ void ndc_update(unsigned long long dt) {
 |----------|-------------|--------------|
 | `ndc_pty(fd, args[])` | Spawn PTY-backed command | - |
 | `ndc_exec(fd, args[], cb, input, len)` | Execute command with callback | - |
-| `ndc_auth(fd, username)` | Authenticate user | 0 on success, 1 on failure |
+| `ndc_auth(fd, username)` | Mark user as authenticated, drop privileges (POSIX) | 0 on success, 1 on failure |
 | `ndc_cert_add(str)` | Add cert mapping: `domain:cert.pem:key.pem` | - |
 | `ndc_certs_add(fname)` | Load certificate mappings from file | - |
 | `ndc_mmap(mapped, file)` | Map file into memory | File size or -1 |
@@ -177,7 +177,7 @@ Define these weak symbol hooks to customize behavior:
 | `ndc_flush(socket_t fd, int argc, char *argv[])` | After command execution | - |
 | `ndc_vim(socket_t fd, int argc, char *argv[])` | Called when command not found | - |
 | `ndc_update(unsigned long long dt)` | Periodic updates (dt in milliseconds) | - |
-| `ndc_auth_check(socket_t fd)` | Custom authentication | Username string or NULL |
+| `ndc_auth_check(socket_t fd)` | Custom auth hook: validate credentials, return username. Default: session file lookup in `./sessions/` | Username string or NULL |
 
 Example:
 
@@ -272,7 +272,7 @@ Access with `ndc_flags()` and `ndc_set_flags()`:
 | Custom commands | ✅ | ✅ |
 | PTY/Terminal | ✅ | ❌ |
 | CGI execution | ✅ | ❌ |
-| Authentication | ✅ | ❌ |
+| Authentication (privilege dropping) | ✅ | ❌ |
 | SSL certs | ✅ | ❌ |
 
 Windows build provides core networking only.
@@ -346,7 +346,7 @@ Load dynamic modules with dependency resolution via `libndx`:
 const char *ndx_deps[] = { "dependency.so", NULL };
 
 // In main application
-ndx_load("plguin.so");  // Automatically loads dependencies
+ndx_load("plugin.so");  // Automatically loads dependencies
 ```
 
 The binary automatically loads `core.so` at startup. Plugins can hook into lifecycle events (`ndc_update`, `ndc_connect`, etc.) to extend functionality.
