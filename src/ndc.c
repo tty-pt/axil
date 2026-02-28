@@ -11,7 +11,6 @@
 #define NDX_AREG(fname) \
 	ndx_areg(#fname, & fname ## _adapter)
 
-NDX_DEF(int, on_ndc_init, int, i);
 NDX_DEF(int, on_ndc_exit, int, i);
 NDX_DEF(int, on_ndc_update, unsigned long long, dt);
 NDX_DEF(int, on_ndc_vim, socket_t, fd, int, argc, char **, argv);
@@ -21,7 +20,6 @@ NDX_DEF(int, on_ndc_disconnect, socket_t, fd);
 
 static inline void
 ndc_ndx_reg(void) {
-	on_ndc_init_adapter_reg();
 	on_ndc_exit_adapter_reg();
 	on_ndc_update_adapter_reg();
 	on_ndc_vim_adapter_reg();
@@ -117,7 +115,7 @@ main(int argc, char *argv[])
 
 	ndc_ndx_reg();
 
-	ndx_load("./core.so");
+	ndx_load("./core");
 	ndc_main();
 
 	// temporary
