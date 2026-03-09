@@ -127,6 +127,7 @@ socket_t srv_ssl_fd = -1, srv_fd = -1;
 int ndc_srv_flags = 0;
 static unsigned cmds_hd;
 fd_set fds_read, fds_active, fds_write, fds_wactive;
+socket_t tunnel_pair[FD_SETSIZE];
 long long dt, tack = 0;
 SSL_CTX *default_ssl_ctx;
 long long ndc_tick;
@@ -135,7 +136,9 @@ int do_cleanup = 1;
 char ndc_execbuf[BUFSIZ * 64];
 
 char *domain_default = NULL;
-unsigned cert_hd, mime_hd, hdlr_hd; 
+unsigned cert_hd, mime_hd, hdlr_hd, ws_hd;
+
+static void ndc_ws_tunnel(socket_t a, socket_t b);
 
 void
 ndc_env_clear(socket_t fd)
@@ -206,6 +209,29 @@ ndc_close(socket_t fd)
 
 	if (d->flags & DF_WEBSOCKET)
 		ws_close(fd);
+
+	/* If part of tunnel, close the peer as well */
+	if (d->flags & DF_TUNNEL) {
+		socket_t peer = tunnel_pair[fd];
+		if (peer >= 0 && peer != fd) {
+			struct descr *pd = &descr_map[peer];
+			if (pd->remaining_size)
+				free(pd->remaining);
+			pd->resp_headers[0] = '\0';
+			if (pd->cSSL) {
+				SSL_shutdown(pd->cSSL);
+				SSL_free(pd->cSSL);
+			}
+			shutdown(peer, 2);
+			close(peer);
+			FD_CLR(peer, &fds_active);
+			FD_CLR(peer, &fds_read);
+			FD_CLR(peer, &fds_wactive);
+			FD_CLR(peer, &fds_write);
+			tunnel_pair[peer] = -1;
+		}
+		tunnel_pair[fd] = -1;
+	}
 
 	if (ndc_platform && ndc_platform->cleanup_descr)
 		ndc_platform->cleanup_descr(d);
@@ -734,6 +760,47 @@ descr_proc_reads(void)
 		if (d->pty == -2 && ndc_platform && ndc_platform->pty_read) {
 			if (ndc_platform->pty_read(d->fd) < 0)
 				FD_CLR(i, &fds_active);
+			continue;
+		}
+
+		// Handle tunnel proxy
+		if (d->flags & DF_TUNNEL) {
+			char buf[4096];
+			ssize_t n = read(i, buf, sizeof(buf));
+			if (n <= 0) {
+				// EOF or error - close both ends of tunnel
+				socket_t peer = tunnel_pair[i];
+				if (peer >= 0 && peer != i) {
+					FD_CLR(peer, &fds_active);
+					FD_CLR(peer, &fds_wactive);
+					close(peer);
+					tunnel_pair[peer] = -1;
+				}
+				tunnel_pair[i] = -1;
+				close(i);
+				continue;
+			}
+			// Write to paired socket
+			socket_t peer = tunnel_pair[i];
+			if (peer >= 0) {
+				// Check if this is a 101 response from upstream
+				if (n >= 12 && strncmp(buf, "HTTP/1.1 101", 12) == 0) {
+					// This is the 101 Switching Protocols response
+					// Forward it to the client using proper I/O
+					struct io *dio = &io[peer];
+					dio->write(peer, buf, n, 0);
+				} else {
+					// Not 101 - forward error and close
+					struct io *dio = &io[peer];
+					dio->write(peer, buf, n, 0);
+					FD_CLR(peer, &fds_active);
+					FD_CLR(peer, &fds_wactive);
+					close(peer);
+					tunnel_pair[peer] = -1;
+					tunnel_pair[i] = -1;
+					close(i);
+				}
+			}
 			continue;
 		}
 
@@ -1502,6 +1569,58 @@ request_handle(socket_t fd, int argc, char *argv[], int req_flags)
 	if (request_handle_trailing_slash(fd, document_uri))
 		return;
 
+	/* Check for registered websocket handler before auto-detection */
+	char path_with_method[16384];
+	snprintf(path_with_method, sizeof(path_with_method), "%s:%s", method, document_uri);
+	const void *ws_key = qmap_get(ws_hd, path_with_method);
+	if (!ws_key)
+		ws_key = qmap_get(ws_hd, document_uri);
+
+	ndc_ws_upstream_t *ws_handler = NULL;
+	if (ws_key) {
+		memcpy(&ws_handler, ws_key, sizeof(ws_handler));
+	}
+
+	/* Prepare environment for handlers */
+	char *body = argv[argc] + body_start + 1;
+	_env_prep(fd, document_uri, param, method);
+
+	/* If websocket handler registered, call it */
+	if (ws_handler) {
+		socket_t upstream = ws_handler(fd);
+		if (upstream >= 0) {
+			/* Make upstream non-blocking */
+#ifndef _WIN32
+			fcntl(upstream, F_SETFL, O_NONBLOCK);
+#endif
+
+			/* Build minimal websocket upgrade request using argv and Sec-WebSocket-Key */
+			char ws_key[128];
+			if (ndc_env_get(fd, ws_key, "HTTP_SEC_WEBSOCKET_KEY")) {
+				fprintf(stderr, "WS: no Sec-WebSocket-Key header\n");
+				close(upstream);
+			} else {
+				char req_buf[1024];
+				int len = snprintf(req_buf, sizeof(req_buf),
+					"%s %s HTTP/1.1\r\n"
+					"Host: 127.0.0.1:3000\r\n"
+					"Upgrade: websocket\r\n"
+					"Connection: Upgrade\r\n"
+					"Sec-WebSocket-Key: %s\r\n"
+					"Sec-WebSocket-Version: 13\r\n"
+					"\r\n",
+					argv[0], argv[1], ws_key);
+
+				/* Send to upstream - non-blocking, don't wait for response */
+				write(upstream, req_buf, len);
+
+				/* Start tunnel immediately - event loop handles response and proxying */
+				ndc_ws_tunnel(fd, upstream);
+			}
+		}
+		return;
+	}
+
 	if (!(d->flags & DF_WEBSOCKET)) {
 		if (request_handle_websocket(fd))
 			return;
@@ -1522,14 +1641,7 @@ request_handle(socket_t fd, int argc, char *argv[], int req_flags)
 	if (request_handle_redirect(fd, document_uri))
 		return;
 
-	char *body = argv[argc] + body_start + 1;
-
-	_env_prep(fd, document_uri, param, method);
-
-	char path_with_method[16384];
-	snprintf(path_with_method, sizeof(path_with_method), "%s:%s", method, document_uri);
-	
-	/* Try exact match first (backward compatible) */
+	/* Try HTTP handler match */
 	const void *key = qmap_get(hdlr_hd, path_with_method);
 	if (!key)
 		key = qmap_get(hdlr_hd, document_uri);
@@ -1560,6 +1672,85 @@ void
 ndc_register_handler(char *path, ndc_handler_t handler)
 {
 	qmap_put(hdlr_hd, path, &handler);
+}
+
+void
+ndc_ws_handler(char *path, ndc_ws_upstream_t handler)
+{
+	qmap_put(ws_hd, path, &handler);
+}
+
+int
+ndc_ws_upgrade(socket_t fd)
+{
+	struct descr *d = &descr_map[fd];
+	char buf[ENV_VALUE_LEN];
+
+	if (d->flags & DF_WEBSOCKET)
+		return 0;
+
+	if (ndc_env_get(fd, buf, "HTTP_SEC_WEBSOCKET_KEY"))
+		return -1;
+
+	struct io *dio = &io[fd];
+	if (ws_init(fd, buf))
+		return -1;
+
+	d->flags |= DF_WEBSOCKET;
+	dio->read = ws_read;
+	dio->write = ws_write;
+
+	return 0;
+}
+
+int
+ndc_ws_write(socket_t fd, const void *data, size_t len)
+{
+	return ws_write(fd, (void *)data, len, 0);
+}
+
+ssize_t
+ndc_ws_read(socket_t fd, void *buf, size_t len)
+{
+	return ws_read(fd, buf, len, 0);
+}
+
+int
+ndc_ws_close(socket_t fd)
+{
+	ws_close(fd);
+	return 0;
+}
+
+int
+ndc_ws_printf(socket_t fd, const char *fmt, ...)
+{
+	va_list args;
+	va_start(args, fmt);
+	int ret = ws_dprintf(fd, fmt, args);
+	va_end(args);
+	return ret;
+}
+
+static void
+ndc_ws_tunnel(socket_t a, socket_t b)
+{
+	struct descr *da = &descr_map[a];
+	struct descr *db = &descr_map[b];
+
+#ifndef _WIN32
+	fcntl(a, F_SETFL, O_NONBLOCK);
+	fcntl(b, F_SETFL, O_NONBLOCK);
+#endif
+
+	FD_SET(a, &fds_active);
+	FD_SET(b, &fds_active);
+
+	da->flags |= DF_TUNNEL;
+	db->flags |= DF_TUNNEL;
+
+	tunnel_pair[a] = b;
+	tunnel_pair[b] = a;
 }
 
 void
@@ -1594,13 +1785,18 @@ ndc_pre_init(void)
 	ndc_config.port = 80;
 	ndc_config.ssl_port = 443;
 
+	for (int i = 0; i < FD_SETSIZE; i++)
+		tunnel_pair[i] = -1;
+
 	unsigned cert_type = qmap_reg(sizeof(cert_t));
 	unsigned cmd_type = qmap_reg(sizeof(struct cmd_slot));
 	unsigned hdlr_type = qmap_reg(sizeof(ndc_handler_t *));
+	unsigned ws_type = qmap_reg(sizeof(ndc_ws_upstream_t *));
 
 	mime_hd = qmap_open(NULL, NULL, QM_STR, QM_STR, MIME_MASK, 0);
 	cert_hd = qmap_open(NULL, NULL, QM_STR, cert_type, CERT_MASK, 0);
 	hdlr_hd = qmap_open(NULL, NULL, QM_STR, hdlr_type, HDLR_MASK, 0);
+	ws_hd = qmap_open(NULL, NULL, QM_STR, ws_type, HDLR_MASK, 0);
 	cmds_hd = qmap_open(NULL, NULL, QM_STR, cmd_type, CMD_MASK, 0);
 }
 

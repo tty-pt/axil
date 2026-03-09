@@ -5,6 +5,12 @@
 		ndc_register;
 		ndc_main;
 		ndc_register_handler;
+		ndc_ws_handler;
+		ndc_ws_upgrade;
+		ndc_ws_write;
+		ndc_ws_read;
+		ndc_ws_close;
+		ndc_ws_printf;
 		ndc_update;
 		ndc_vim;
 		ndc_accept;

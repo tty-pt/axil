@@ -49,7 +49,8 @@ enum descr_flags {
 	DF_ACCEPTED = 16,
 	/** Authenticated user. */
 	DF_AUTHENTICATED = 32,
-	DF_RESERVED = 64,
+	/** Part of a tunnel pair. */
+	DF_TUNNEL = 64,
 	// RESERVED = 0x80,
 };
 
@@ -75,6 +76,12 @@ enum ndc_req_flags {
 
 /** HTTP handler callback signature. */
 typedef int ndc_handler_t(socket_t cfd, char *body);
+
+/** WebSocket tunnel callback: connects to upstream and returns socket.
+ *  NDC handles forwarding the HTTP upgrade request, reading the response,
+ *  and establishing the tunnel.
+ */
+typedef socket_t ndc_ws_upstream_t(socket_t client_fd);
 
 /** Global server configuration.
  *
@@ -120,6 +127,29 @@ int ndc_main(void);
  *  Example: "/items/:id" matches "/items/123", sets PATTERN_PARAM_ID="123"
  */
 void ndc_register_handler(char *path, ndc_handler_t handler);
+
+/** Register a websocket handler for a path.
+ *  When a websocket request arrives for this path, the handler is called
+ *  with the client socket. The handler connects to the upstream and returns
+ *  the upstream socket. NDC then forwards the HTTP upgrade, reads the response,
+ *  and establishes a bidirectional tunnel.
+ */
+void ndc_ws_handler(char *path, ndc_ws_upstream_t handler);
+
+/** Upgrade connection to websocket. Reads Sec-WebSocket-Key from environment. */
+int ndc_ws_upgrade(socket_t fd);
+
+/** Write data to websocket. */
+int ndc_ws_write(socket_t fd, const void *data, size_t len);
+
+/** Read data from websocket. Returns bytes read, 0 on close, -1 on error. */
+ssize_t ndc_ws_read(socket_t fd, void *buf, size_t len);
+
+/** Close websocket connection. */
+int ndc_ws_close(socket_t fd);
+
+/** Formatted write to websocket. */
+int ndc_ws_printf(socket_t fd, const char *fmt, ...);
 
 /* define these */
 /** Periodic update hook. */

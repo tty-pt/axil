@@ -41,6 +41,7 @@ struct descr {
 };
 
 extern struct descr descr_map[FD_SETSIZE];
+extern socket_t tunnel_pair[FD_SETSIZE];
 extern fd_set fds_read, fds_active, fds_write, fds_wactive;
 extern struct timeval exec_timeout;
 extern int do_cleanup;
