@@ -115,7 +115,7 @@ main(int argc, char *argv[])
 
 	ndc_ndx_reg();
 
-	ndx_load("./core");
+	ndx_load("./mods/core/core");
 	ndc_main();
 
 	// temporary

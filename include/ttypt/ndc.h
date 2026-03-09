@@ -74,7 +74,7 @@ enum ndc_req_flags {
 };
 
 /** HTTP handler callback signature. */
-typedef void ndc_handler_t(socket_t cfd, char *body);
+typedef int ndc_handler_t(socket_t cfd, char *body);
 
 /** Global server configuration.
  *
@@ -114,7 +114,11 @@ extern struct ndc_config ndc_config;
 void ndc_register(char *name, ndc_cb_t *cb, int flags);
 /** Run the main server loop (blocks). */
 int ndc_main(void);
-/** Register an HTTP handler for an exact path. */
+/** Register an HTTP handler for a path (exact match or pattern).
+ *  Patterns support :param syntax (e.g., "/items/:id" or "/a/:type/:id").
+ *  Matched parameters are available via PATTERN_PARAM_<NAME> env vars.
+ *  Example: "/items/:id" matches "/items/123", sets PATTERN_PARAM_ID="123"
+ */
 void ndc_register_handler(char *path, ndc_handler_t handler);
 
 /* define these */

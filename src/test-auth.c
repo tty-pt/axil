@@ -6,7 +6,7 @@
 #include <string.h>
 #include <unistd.h>
 
-static void
+static int
 auth_handler(socket_t fd, char *body)
 {
 	(void)body;
@@ -23,6 +23,7 @@ auth_handler(socket_t fd, char *body)
 			"\r\n"
 			"%s",
 			strlen(resp), resp);
+	return 0;
 }
 
 char *

@@ -1101,10 +1101,10 @@ _env_prep(socket_t fd, char *document_uri,
 		strncpy(req_content_type, "text/plain", sizeof(req_content_type));
 
 	ndc_env_put(fd, "CONTENT_TYPE", env_sane(req_content_type));
-	ndc_env_put(fd, "CONTENT_TYPE", env_sane(req_content_type));
 	ndc_env_put(fd, "DOCUMENT_URI", document_uri);
 	ndc_env_put(fd, "QUERY_STRING", env_sane(param));
 	ndc_env_put(fd, "REQUEST_METHOD", method);
+	ndc_env_put(fd, "DOCUMENT_ROOT", geteuid() ? ndc_config.chroot : "");
 	ndc_env_put(fd, "SCRIPT_NAME", cgi_index + 1);
 	if (ndc_platform && ndc_platform->env_prep)
 		ndc_platform->env_prep(fd);
@@ -1313,6 +1313,114 @@ request_handle_autoindex(socket_t fd, const char *uri_path, const char *fs_path)
 		ndc_close(fd);
 }
 
+/* Match a URL pattern against a path
+ * Pattern: "/chords/:id" matches "/chords/test-transpose" (exact segment count)
+ * Pattern: "/items/:type/:id" matches "/items/song/test"
+ * Pattern must have same number of segments as path (no prefix matching)
+ * Sets env var PATTERN_PARAM_ID="test-transpose", etc.
+ * Returns 1 on match, 0 on no match
+ */
+static int
+pattern_match(const char *pattern, const char *path, socket_t fd)
+{
+	const char *p = pattern;
+	const char *u = path;
+
+	while (*p && *u) {
+		if (*p == ':') {
+			/* Found parameter - extract param name */
+			p++;
+			const char *param_start = p;
+			while (*p && *p != '/' && *p != '?')
+				p++;
+
+			size_t param_name_len = p - param_start;
+			char param_name[128];
+			if (param_name_len >= sizeof(param_name))
+				return 0;
+
+			memcpy(param_name, param_start, param_name_len);
+			param_name[param_name_len] = '\0';
+
+			/* Extract param value from URL */
+			const char *value_start = u;
+			while (*u && *u != '/' && *u != '?')
+				u++;
+
+			size_t value_len = u - value_start;
+			
+			/* Empty parameter value is not allowed */
+			if (value_len == 0)
+				return 0;
+
+			char value[256];
+			if (value_len >= sizeof(value))
+				return 0;
+
+			memcpy(value, value_start, value_len);
+			value[value_len] = '\0';
+
+			/* Set environment variable PATTERN_PARAM_<NAME>=<value> */
+			char env_key[256];
+			snprintf(env_key, sizeof(env_key), "PATTERN_PARAM_%s", param_name);
+
+			/* Convert param name to uppercase */
+			for (char *c = env_key + 14; *c; c++)  /* Skip "PATTERN_PARAM_" */
+				*c = toupper((unsigned char)*c);
+
+			ndc_env_put(fd, env_key, value);
+
+			/* Continue matching after parameter */
+			continue;
+		}
+
+		if (*p != *u)
+			return 0;
+
+		p++;
+		u++;
+	}
+
+	/* Both must be at end (or query string) - exact match required */
+	/* Pattern and path must end at same point (no trailing segments allowed) */
+	if (*p == '\0' && (*u == '\0' || *u == '?'))
+		return 1;
+
+	return 0;
+}
+
+/* Pattern matching for registered handlers
+ * Supports :param syntax (e.g., "/chords/:id")
+ * Sets PATTERN_PARAM_* env vars for matched parameters
+ */
+static ndc_handler_t *
+ndc_match_pattern(const char *path_with_method, const char *document_uri, socket_t fd)
+{
+	/* Iterate through all registered handlers */
+	uint32_t cur = qmap_iter(hdlr_hd, NULL, 0);
+	const void *pattern_key;
+	const void *handler_ptr;
+
+	while (qmap_next(&pattern_key, &handler_ptr, cur)) {
+		const char *pattern = (const char *)pattern_key;
+
+		/* Skip non-patterns (no : character) */
+		if (!strchr(pattern, ':'))
+			continue;
+
+		/* Try to match pattern against both path_with_method and document_uri */
+		if (pattern_match(pattern, path_with_method, fd) ||
+		    pattern_match(pattern, document_uri, fd)) {
+			ndc_handler_t *hdlr;
+			memcpy(&hdlr, handler_ptr, sizeof(hdlr));
+			qmap_fin(cur); /* Close iterator */
+			return hdlr;
+		}
+	}
+
+	return NULL;
+}
+
 static inline int
 request_handle_trailing_slash(socket_t fd, char *document_uri)
 {
@@ -1378,6 +1486,14 @@ request_handle(socket_t fd, int argc, char *argv[], int req_flags)
 	else
 		param = "";
 
+	/* Normalize: Remove trailing slash
+	 * (ignore if it's just "/")
+	 */
+	size_t uri_len = strlen(document_uri);
+	if (uri_len > 1 && document_uri[uri_len - 1] == '/') {
+		document_uri[uri_len - 1] = '\0';
+	}
+
 	headers_get(fd, &body_start, argv[argc]);
 
 	if (ndc_platform && ndc_platform->auth_try)
@@ -1412,13 +1528,19 @@ request_handle(socket_t fd, int argc, char *argv[], int req_flags)
 
 	char path_with_method[16384];
 	snprintf(path_with_method, sizeof(path_with_method), "%s:%s", method, document_uri);
+	
+	/* Try exact match first (backward compatible) */
 	const void *key = qmap_get(hdlr_hd, path_with_method);
 	if (!key)
 		key = qmap_get(hdlr_hd, document_uri);
 
 	ndc_handler_t *hdlr = NULL;
-	if (key)
+	if (key) {
 		memcpy(&hdlr, key, sizeof(hdlr));
+	} else {
+		/* Try pattern matching */
+		hdlr = ndc_match_pattern(path_with_method, document_uri, fd);
+	}
 
 	if (hdlr) {
 		hdlr(fd, body);
