@@ -193,15 +193,38 @@ ndc_body(socket_t fd, const char *body)
 }
 
 
+static void
+ndc_raw_descr_reset(socket_t fd);
+
+static void
+ndc_tunnel_close_raw(socket_t fd);
+
 void
 ndc_close(socket_t fd)
 {
+	if (fd < 0 || fd >= FD_SETSIZE)
+		return;
+
 	struct descr *d = &descr_map[fd];
 
-	if (d->remaining_size)
-		free(d->remaining);
+	/*
+	 * Tunnel descriptors and pending WS proxy pairs must use unified pair teardown.
+	 * Otherwise one side can survive with a stale tunnel_pair[] entry and later hit
+	 * an unrelated connection that reuses the same fd number.
+	 */
+	if (d->flags & (DF_TUNNEL | DF_WS_PROXY_PENDING | DF_WS_WAITING)) {
+		ndc_tunnel_close_raw(fd);
+		return;
+	}
 
-	/* Clear buffer (should already be empty if API used correctly) */
+	if (d->remaining_size && d->remaining) {
+		free(d->remaining);
+		d->remaining = NULL;
+	}
+	d->remaining_size = 0;
+	d->remaining_len = 0;
+	d->remaining_off = 0;
+
 	d->resp_headers[0] = '\0';
 
 	if ((d->flags & DF_CONNECTED) && ndc_disconnect)
@@ -210,45 +233,32 @@ ndc_close(socket_t fd)
 	if (d->flags & DF_WEBSOCKET)
 		ws_close(fd);
 
-	/* If part of tunnel, close the peer as well */
-	if (d->flags & DF_TUNNEL) {
-		socket_t peer = tunnel_pair[fd];
-		if (peer >= 0 && peer != fd) {
-			struct descr *pd = &descr_map[peer];
-			if (pd->remaining_size)
-				free(pd->remaining);
-			pd->resp_headers[0] = '\0';
-			if (pd->cSSL) {
-				SSL_shutdown(pd->cSSL);
-				SSL_free(pd->cSSL);
-			}
-			shutdown(peer, 2);
-			close(peer);
-			FD_CLR(peer, &fds_active);
-			FD_CLR(peer, &fds_read);
-			FD_CLR(peer, &fds_wactive);
-			FD_CLR(peer, &fds_write);
-			tunnel_pair[peer] = -1;
-		}
-		tunnel_pair[fd] = -1;
-	}
-
 	if (ndc_platform && ndc_platform->cleanup_descr)
 		ndc_platform->cleanup_descr(d);
 
 	if (d->cSSL) {
 		SSL_shutdown(d->cSSL);
 		SSL_free(d->cSSL);
+		d->cSSL = NULL;
 	}
 
-	shutdown(fd, 2);
-	close(fd);
 	FD_CLR(fd, &fds_active);
 	FD_CLR(fd, &fds_read);
 	FD_CLR(fd, &fds_wactive);
 	FD_CLR(fd, &fds_write);
-	ndc_env_clear(fd);
-	qmap_close(d->env_hd);
+
+	if (d->env_hd) {
+		ndc_env_clear(fd);
+		qmap_close(d->env_hd);
+		d->env_hd = 0;
+	}
+
+	shutdown(fd, 2);
+	close(fd);
+
+	tunnel_pair[fd] = -1;
+
+	memset(&io[fd], 0, sizeof(struct io));
 	memset(d, 0, sizeof(struct descr));
 	d->fd = -1;
 }
@@ -277,10 +287,18 @@ static void setup_signals(void)
     memset(&sa, 0, sizeof(sa));
     sa.sa_handler = sig_shutdown;
     sigemptyset(&sa.sa_mask);
-    sa.sa_flags = 0;   // IMPORTANTE: sem SA_RESTART
+    sa.sa_flags = 0;
 
     sigaction(SIGINT, &sa, NULL);
     sigaction(SIGTERM, &sa, NULL);
+
+    struct sigaction sa_pipe;
+    memset(&sa_pipe, 0, sizeof(sa_pipe));
+    sa_pipe.sa_handler = SIG_IGN;
+    sigemptyset(&sa_pipe.sa_mask);
+    sa_pipe.sa_flags = 0;
+
+    sigaction(SIGPIPE, &sa_pipe, NULL);
 #endif
     atexit(cleanup);
 }
@@ -378,18 +396,30 @@ ndc_write_remaining(socket_t fd)
 	if (!d->remaining_len)
 		return 0;
 
-	int ret = dio->lower_write(fd, d->remaining + d->remaining_off, d->remaining_len, 0);
+	int ret = dio->lower_write(fd,
+		d->remaining + d->remaining_off,
+		d->remaining_len, 0);
 
-	if (ret < 0 && errno == EAGAIN)
+	if (ret < 0) {
+		if (errno == EAGAIN || errno == EINTR)
+			return -1;
+
+		ndc_close(fd);
 		return -1;
+	}
+
+	if (ret == 0)
+		return 0;
 
 	d->remaining_off += ret;
 	d->remaining_len -= ret;
+
 	if (!d->remaining_len) {
 		d->remaining_off = 0;
 		if (d->flags & DF_TO_CLOSE)
 			ndc_close(fd);
 	}
+
 	return ret;
 }
 
@@ -514,6 +544,28 @@ descr_new(int ssl)
 	}
 	if (ndc_accept)
 		ndc_accept(fd);
+}
+
+static void
+ndc_upstream_descr_init(socket_t fd)
+{
+	struct descr *d = &descr_map[fd];
+	struct io *dio = &io[fd];
+
+	memset(d, 0, sizeof(struct descr));
+	memset(dio, 0, sizeof(struct io));
+
+	d->fd = fd;
+	d->flags = DF_ACCEPTED;
+	d->remaining_size = BUFSIZ * 1024;
+	d->remaining = malloc(d->remaining_size);
+	d->epid = 0;
+	d->env_hd = qmap_open(NULL, NULL, QM_STR, QM_STR, ENV_MASK, 0);
+	d->pty = -1;
+
+	dio->read = dio->lower_read = (io_t) recv;
+	dio->lower_write = (io_t) send;
+	dio->write = ndc_low_write;
 }
 
 inline static ssize_t
@@ -742,69 +794,162 @@ descr_proc_writes(void)
 	}
 }
 
+static void
+ndc_raw_descr_reset(socket_t fd)
+{
+	if (fd < 0 || fd >= FD_SETSIZE)
+		return;
+
+	struct descr *d = &descr_map[fd];
+
+	FD_CLR(fd, &fds_active);
+	FD_CLR(fd, &fds_wactive);
+	FD_CLR(fd, &fds_read);
+	FD_CLR(fd, &fds_write);
+
+	if (d->cSSL) {
+		SSL_shutdown(d->cSSL);
+		SSL_free(d->cSSL);
+		d->cSSL = NULL;
+	}
+
+	if (d->remaining_size && d->remaining) {
+		free(d->remaining);
+		d->remaining = NULL;
+	}
+	d->remaining_size = 0;
+	d->remaining_len = 0;
+	d->remaining_off = 0;
+
+	d->resp_headers[0] = '\0';
+
+	if (d->env_hd) {
+		ndc_env_clear(fd);
+		qmap_close(d->env_hd);
+		d->env_hd = 0;
+	}
+
+	shutdown(fd, 2);
+	close(fd);
+
+	tunnel_pair[fd] = -1;
+
+	memset(&io[fd], 0, sizeof(struct io));
+	memset(d, 0, sizeof(struct descr));
+	d->fd = -1;
+}
+
+static void
+ndc_tunnel_close_raw(socket_t fd)
+{
+	if (fd < 0 || fd >= FD_SETSIZE)
+		return;
+
+	socket_t peer = tunnel_pair[fd];
+
+	tunnel_pair[fd] = -1;
+	if (peer >= 0 && peer < FD_SETSIZE && peer != fd)
+		tunnel_pair[peer] = -1;
+
+	ndc_raw_descr_reset(fd);
+
+	if (peer >= 0 && peer < FD_SETSIZE && peer != fd)
+		ndc_raw_descr_reset(peer);
+}
+
 static inline void
 descr_proc_reads(void)
 {
 	for (register socket_t i = 0; i < FD_SETSIZE; i++) {
-		struct descr *d = &descr_map[i];
-
 		if (!FD_ISSET(i, &fds_read))
 			continue;
 
-		if (i == srv_fd)
+		if (i == srv_fd) {
 			descr_new(0);
-		else if (i == srv_ssl_fd)
+			continue;
+		}
+		if (i == srv_ssl_fd) {
 			descr_new(1);
+			continue;
+		}
 
-		// i is a pty fd
+		struct descr *d = &descr_map[i];
+		struct io *dio = &io[i];
+
+		/* Descriptor might have been reset earlier in this same pass */
+		if (d->fd != i)
+			continue;
+
+		/* PTY */
 		if (d->pty == -2 && ndc_platform && ndc_platform->pty_read) {
 			if (ndc_platform->pty_read(d->fd) < 0)
 				FD_CLR(i, &fds_active);
 			continue;
 		}
 
-		// Handle tunnel proxy
-		if (d->flags & DF_TUNNEL) {
+		/* Waiting for upstream 101 */
+		if (d->flags & DF_WS_WAITING) {
 			char buf[4096];
-			ssize_t n = read(i, buf, sizeof(buf));
+			ssize_t n = dio->read(i, buf, sizeof(buf), 0);
+
 			if (n <= 0) {
-				// EOF or error - close both ends of tunnel
-				socket_t peer = tunnel_pair[i];
-				if (peer >= 0 && peer != i) {
-					FD_CLR(peer, &fds_active);
-					FD_CLR(peer, &fds_wactive);
-					close(peer);
-					tunnel_pair[peer] = -1;
-				}
-				tunnel_pair[i] = -1;
-				close(i);
+				ndc_tunnel_close_raw(i);
 				continue;
 			}
-			// Write to paired socket
+
 			socket_t peer = tunnel_pair[i];
-			if (peer >= 0) {
-				// Check if this is a 101 response from upstream
-				if (n >= 12 && strncmp(buf, "HTTP/1.1 101", 12) == 0) {
-					// This is the 101 Switching Protocols response
-					// Forward it to the client using proper I/O
-					struct io *dio = &io[peer];
-					dio->write(peer, buf, n, 0);
-				} else {
-					// Not 101 - forward error and close
-					struct io *dio = &io[peer];
-					dio->write(peer, buf, n, 0);
-					FD_CLR(peer, &fds_active);
-					FD_CLR(peer, &fds_wactive);
-					close(peer);
-					tunnel_pair[peer] = -1;
-					tunnel_pair[i] = -1;
-					close(i);
-				}
+			if (peer < 0 || peer == i || peer >= FD_SETSIZE ||
+					descr_map[peer].fd != peer ||
+					tunnel_pair[peer] != i ||
+					!(descr_map[peer].flags & DF_WS_PROXY_PENDING)) {
+				ndc_tunnel_close_raw(i);
+				continue;
+			}
+
+			struct io *pdio = &io[peer];
+
+			if (n >= 12 && !strncmp(buf, "HTTP/1.1 101", 12)) {
+				/* Forward 101 back to browser */
+				pdio->write(peer, buf, n, 0);
+
+				/* Only now enter raw tunnel mode */
+				ndc_ws_tunnel(peer, i);
+			} else {
+				/* Forward upstream failure response, then tear down */
+				pdio->write(peer, buf, n, 0);
+				ndc_tunnel_close_raw(i);
 			}
 			continue;
 		}
 
-		// i is not a pty fd!
+		/* Raw tunnel mode */
+		if (d->flags & DF_TUNNEL) {
+			char buf[4096];
+			ssize_t n = dio->read(i, buf, sizeof(buf), 0);
+
+			if (n <= 0) {
+				ndc_tunnel_close_raw(i);
+				continue;
+			}
+
+			socket_t peer = tunnel_pair[i];
+			if (peer < 0 || peer == i || peer >= FD_SETSIZE || descr_map[peer].fd != peer) {
+				ndc_tunnel_close_raw(i);
+				continue;
+			}
+
+			struct io *pdio = &io[peer];
+
+			/*
+			 * IMPORTANT:
+			 * ndc_low_write() may return -1 merely because it buffered
+			 * the data. That is NOT a fatal tunnel error here.
+			 */
+			(void) pdio->write(peer, buf, n, 0);
+			continue;
+		}
+
+		/* Normal NDC path */
 		if (!d->epid && descr_read(i) < 0)
 			ndc_close(i);
 	}
@@ -1032,20 +1177,25 @@ ndc_main(void)
 		fds_read = fds_active;
 		fds_write = fds_wactive;
 		int select_n = select(FD_SETSIZE, &fds_read, &fds_write, NULL, &timeout);
+
 		descr_proc_writes();
 
 		switch (select_n) {
 		case -1:
 			switch (errno) {
-			case EAGAIN: /* return 0; */
+			case EAGAIN:
 			case EINTR:
-			case EBADF: continue;
+				continue;
+			case EBADF:
+				ERR("select: EBADF\n");
+				continue;
 			}
 
 			ERR("select\n");
 			return -1;
 
-		case 0: continue;
+		case 0:
+			continue;
 		}
 
 		descr_proc_reads();
@@ -1589,18 +1739,16 @@ request_handle(socket_t fd, int argc, char *argv[], int req_flags)
 	if (ws_handler) {
 		socket_t upstream = ws_handler(fd);
 		if (upstream >= 0) {
-			/* Make upstream non-blocking */
 #ifndef _WIN32
 			fcntl(upstream, F_SETFL, O_NONBLOCK);
 #endif
 
-			/* Build minimal websocket upgrade request using argv and Sec-WebSocket-Key */
 			char ws_key[128];
 			if (ndc_env_get(fd, ws_key, "HTTP_SEC_WEBSOCKET_KEY")) {
 				fprintf(stderr, "WS: no Sec-WebSocket-Key header\n");
 				close(upstream);
 			} else {
-				char req_buf[1024];
+				char req_buf[2048];
 				int len = snprintf(req_buf, sizeof(req_buf),
 					"%s %s HTTP/1.1\r\n"
 					"Host: 127.0.0.1:3000\r\n"
@@ -1611,19 +1759,38 @@ request_handle(socket_t fd, int argc, char *argv[], int req_flags)
 					"\r\n",
 					argv[0], argv[1], ws_key);
 
-				/* Send to upstream - non-blocking, don't wait for response */
-				write(upstream, req_buf, len);
+				if (len <= 0 || len >= (int)sizeof(req_buf)) {
+					close(upstream);
+					return;
+				}
 
-				/* Start tunnel immediately - event loop handles response and proxying */
-				ndc_ws_tunnel(fd, upstream);
+				ndc_upstream_descr_init(upstream);
+
+				tunnel_pair[fd] = upstream;
+				tunnel_pair[upstream] = fd;
+
+				/* both ends belong to the same pending WS proxy pair */
+				descr_map[fd].flags |= DF_WS_PROXY_PENDING;
+				descr_map[upstream].flags |= DF_WS_WAITING | DF_WS_PROXY_PENDING;
+
+				FD_SET(upstream, &fds_active);
+
+#ifdef MSG_NOSIGNAL
+				ssize_t wr = send(upstream, req_buf, len, MSG_NOSIGNAL);
+#else
+				ssize_t wr = write(upstream, req_buf, len);
+#endif
+				if (wr < 0 || wr < len) {
+					ndc_tunnel_close_raw(upstream);
+				}
 			}
 		}
 		return;
 	}
 
 	if (!(d->flags & DF_WEBSOCKET)) {
-		if (request_handle_websocket(fd))
-			return;
+		/* if (request_handle_websocket(fd)) */
+		/* 	return; */
 		d->flags |= DF_TO_CLOSE;
 	}
 
@@ -1746,6 +1913,9 @@ ndc_ws_tunnel(socket_t a, socket_t b)
 	FD_SET(a, &fds_active);
 	FD_SET(b, &fds_active);
 
+	da->flags &= ~(DF_WS_WAITING | DF_WS_PROXY_PENDING);
+	db->flags &= ~(DF_WS_WAITING | DF_WS_PROXY_PENDING);
+
 	da->flags |= DF_TUNNEL;
 	db->flags |= DF_TUNNEL;
 
@@ -1798,6 +1968,11 @@ ndc_pre_init(void)
 	hdlr_hd = qmap_open(NULL, NULL, QM_STR, hdlr_type, HDLR_MASK, 0);
 	ws_hd = qmap_open(NULL, NULL, QM_STR, ws_type, HDLR_MASK, 0);
 	cmds_hd = qmap_open(NULL, NULL, QM_STR, cmd_type, CMD_MASK, 0);
+
+	/* Register default HTTP command handlers */
+	/* These need to be in the library, not just the ndc binary */
+	ndc_register("GET", do_GET, CF_NOAUTH | CF_NOTRIM);
+	ndc_register("POST", do_POST, CF_NOAUTH | CF_NOTRIM);
 }
 
 void

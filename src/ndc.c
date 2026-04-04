@@ -1,5 +1,4 @@
 #include "./../include/ttypt/ndc.h"
-#include "./../include/ttypt/ndc-ndx.h"
 
 #include <unistd.h>
 #include <signal.h>
@@ -8,24 +7,50 @@
 #include <ttypt/qmap.h>
 #include <ttypt/ndx.h>
 
-#define NDX_AREG(fname) \
-	ndx_areg(#fname, & fname ## _adapter)
+#ifdef _WIN32
+#include <winsock2.h>
+typedef SOCKET socket_t;
+#else
+#include <sys/select.h>
+typedef int socket_t;
+#endif
 
-NDX_DEF(int, on_ndc_exit, int, i);
-NDX_DEF(int, on_ndc_update, unsigned long long, dt);
-NDX_DEF(int, on_ndc_vim, socket_t, fd, int, argc, char **, argv);
-NDX_DEF(int, on_ndc_command, socket_t, fd, int, argc, char **, argv);
-NDX_DEF(int, on_ndc_connect, socket_t, fd);
-NDX_DEF(int, on_ndc_disconnect, socket_t, fd);
+struct ndx_ctx ndx;
 
-static inline void
-ndc_ndx_reg(void) {
-	on_ndc_exit_adapter_reg();
-	on_ndc_update_adapter_reg();
-	on_ndc_vim_adapter_reg();
-	on_ndc_command_adapter_reg();
-	on_ndc_connect_adapter_reg();
-	on_ndc_disconnect_adapter_reg();
+NDX_DEF(int, on_ndc_exit, int, i)
+{
+  (void) i;
+  return 0;
+}
+
+NDX_DEF(int, on_ndc_update, unsigned long long, dt)
+{
+  (void) dt;
+  return 0;
+}
+
+NDX_DEF(int, on_ndc_vim, socket_t, fd, int, argc, char **, argv)
+{
+  (void) fd;
+  (void)argc; (void)argv; return 0;
+}
+
+NDX_DEF(int, on_ndc_command, socket_t, fd, int, argc, char **, argv)
+{
+  (void) fd;
+  (void)argc; (void)argv; return 0;
+}
+
+NDX_DEF(int, on_ndc_connect, socket_t, fd)
+{
+  (void) fd;
+  return 0;
+}
+
+NDX_DEF(int, on_ndc_disconnect, socket_t, fd)
+{
+  (void) fd;
+  return 0;
 }
 
 void exit_all(int i) {
@@ -113,7 +138,7 @@ main(int argc, char *argv[])
 	ndc_register("PRI", do_GET, CF_NOAUTH | CF_NOTRIM);
 	ndc_register("POST", do_POST, CF_NOAUTH | CF_NOTRIM);
 
-	ndc_ndx_reg();
+	ndx_init();
 
 	ndx_load("./mods/core/core");
 	ndc_main();

@@ -51,7 +51,10 @@ enum descr_flags {
 	DF_AUTHENTICATED = 32,
 	/** Part of a tunnel pair. */
 	DF_TUNNEL = 64,
-	// RESERVED = 0x80,
+	/** Waiting for upstream websocket upgrade response. */
+	DF_WS_WAITING = 128,
+	DF_WS_PROXY_PENDING = 256,
+	// RESERVED = 0x100,
 };
 
 /** Server configuration flags. */
