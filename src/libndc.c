@@ -202,7 +202,7 @@ ndc_tunnel_close_raw(socket_t fd);
 void
 ndc_close(socket_t fd)
 {
-	if (fd < 0 || fd >= FD_SETSIZE)
+	if (fd == INVALID_SOCKET || fd >= FD_SETSIZE)
 		return;
 
 	struct descr *d = &descr_map[fd];
@@ -256,7 +256,7 @@ ndc_close(socket_t fd)
 	shutdown(fd, 2);
 	close(fd);
 
-	tunnel_pair[fd] = -1;
+	tunnel_pair[fd] = INVALID_SOCKET;
 
 	memset(&io[fd], 0, sizeof(struct io));
 	memset(d, 0, sizeof(struct descr));
@@ -797,7 +797,7 @@ descr_proc_writes(void)
 static void
 ndc_raw_descr_reset(socket_t fd)
 {
-	if (fd < 0 || fd >= FD_SETSIZE)
+	if (fd == INVALID_SOCKET || fd >= FD_SETSIZE)
 		return;
 
 	struct descr *d = &descr_map[fd];
@@ -832,7 +832,7 @@ ndc_raw_descr_reset(socket_t fd)
 	shutdown(fd, 2);
 	close(fd);
 
-	tunnel_pair[fd] = -1;
+	tunnel_pair[fd] = INVALID_SOCKET;
 
 	memset(&io[fd], 0, sizeof(struct io));
 	memset(d, 0, sizeof(struct descr));
@@ -842,18 +842,18 @@ ndc_raw_descr_reset(socket_t fd)
 static void
 ndc_tunnel_close_raw(socket_t fd)
 {
-	if (fd < 0 || fd >= FD_SETSIZE)
+	if (fd == INVALID_SOCKET || fd >= FD_SETSIZE)
 		return;
 
 	socket_t peer = tunnel_pair[fd];
 
-	tunnel_pair[fd] = -1;
-	if (peer >= 0 && peer < FD_SETSIZE && peer != fd)
-		tunnel_pair[peer] = -1;
+	tunnel_pair[fd] = INVALID_SOCKET;
+	if (peer != INVALID_SOCKET && peer < FD_SETSIZE && peer != fd)
+		tunnel_pair[peer] = INVALID_SOCKET;
 
 	ndc_raw_descr_reset(fd);
 
-	if (peer >= 0 && peer < FD_SETSIZE && peer != fd)
+	if (peer != INVALID_SOCKET && peer < FD_SETSIZE && peer != fd)
 		ndc_raw_descr_reset(peer);
 }
 
@@ -898,7 +898,7 @@ descr_proc_reads(void)
 			}
 
 			socket_t peer = tunnel_pair[i];
-			if (peer < 0 || peer == i || peer >= FD_SETSIZE ||
+			if (peer == INVALID_SOCKET || peer == i || peer >= FD_SETSIZE ||
 					descr_map[peer].fd != peer ||
 					tunnel_pair[peer] != i ||
 					!(descr_map[peer].flags & DF_WS_PROXY_PENDING)) {
@@ -933,7 +933,7 @@ descr_proc_reads(void)
 			}
 
 			socket_t peer = tunnel_pair[i];
-			if (peer < 0 || peer == i || peer >= FD_SETSIZE || descr_map[peer].fd != peer) {
+			if (peer == INVALID_SOCKET || peer == i || peer >= FD_SETSIZE || descr_map[peer].fd != peer) {
 				ndc_tunnel_close_raw(i);
 				continue;
 			}
@@ -1321,7 +1321,13 @@ _env_prep(socket_t fd, char *document_uri,
 	ndc_env_put(fd, "DOCUMENT_URI", document_uri);
 	ndc_env_put(fd, "QUERY_STRING", env_sane(param));
 	ndc_env_put(fd, "REQUEST_METHOD", method);
-	ndc_env_put(fd, "DOCUMENT_ROOT", geteuid() ? ndc_config.chroot : "");
+	ndc_env_put(fd, "DOCUMENT_ROOT",
+#ifdef _WIN32
+		0
+#else
+		geteuid()
+#endif
+		? ndc_config.chroot : "");
 	ndc_env_put(fd, "SCRIPT_NAME", cgi_index + 1);
 	if (ndc_platform && ndc_platform->env_prep)
 		ndc_platform->env_prep(fd);
@@ -1738,7 +1744,7 @@ request_handle(socket_t fd, int argc, char *argv[], int req_flags)
 	/* If websocket handler registered, call it */
 	if (ws_handler) {
 		socket_t upstream = ws_handler(fd);
-		if (upstream >= 0) {
+		if (upstream != INVALID_SOCKET) {
 #ifndef _WIN32
 			fcntl(upstream, F_SETFL, O_NONBLOCK);
 #endif
@@ -1956,7 +1962,7 @@ ndc_pre_init(void)
 	ndc_config.ssl_port = 443;
 
 	for (int i = 0; i < FD_SETSIZE; i++)
-		tunnel_pair[i] = -1;
+		tunnel_pair[i] = INVALID_SOCKET;
 
 	unsigned cert_type = qmap_reg(sizeof(cert_t));
 	unsigned cmd_type = qmap_reg(sizeof(struct cmd_slot));

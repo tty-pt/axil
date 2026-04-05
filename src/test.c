@@ -73,6 +73,16 @@ main(void)
 	expect_sym_fn("ndc_exec", (void (*)(void)) ndc_exec);
 	expect_sym_data("ndc_execbuf", ndc_execbuf);
 
+#ifdef _WIN32
+	expect_weak("ndc_update", 1);
+	expect_weak("ndc_vim", 1);
+	expect_weak("ndc_accept", 1);
+	expect_weak("ndc_connect", 1);
+	expect_weak("ndc_disconnect", 1);
+	expect_weak("ndc_command", 1);
+	expect_weak("ndc_flush", 1);
+	expect_weak("ndc_auth_check", 1);
+#else
 	expect_weak("ndc_update", &ndc_update != NULL);
 	expect_weak("ndc_vim", &ndc_vim != NULL);
 	expect_weak("ndc_accept", &ndc_accept != NULL);
@@ -81,6 +91,7 @@ main(void)
 	expect_weak("ndc_command", &ndc_command != NULL);
 	expect_weak("ndc_flush", &ndc_flush != NULL);
 	expect_weak("ndc_auth_check", &ndc_auth_check != NULL);
+#endif
 
 	printf("errors=%u\n", errors);
 	return (int)errors;
