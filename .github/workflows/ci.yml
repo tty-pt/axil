@@ -19,7 +19,7 @@ jobs:
       deps_openbsd: "libqmap,libndx,openssl-3.5.4v0"
       deps_winget: "mingw-w64-x86_64-openssl"
       deps_winget_tty: "libqsys,libqmap,libndx"
-      publish_to: "deb,apk,pacman,rpm,brew,openbsd,pacman_mingw,winget"
+      publish_to: "deb,apk,rpm,brew,openbsd,winget"
     secrets:
       HOST: ${{ secrets.OPENBSD_HOST }}
       USER: ${{ secrets.OPENBSD_USER }}
