@@ -7,6 +7,10 @@
 #include <ttypt/qmap.h>
 #include <ttypt/ndx.h>
 
+struct ndx_ctx ndx;
+
+NDX_DECL(const char *, get_session_user, const char *, token);
+
 #ifdef _WIN32
 #include <winsock2.h>
 typedef SOCKET socket_t;
@@ -14,8 +18,6 @@ typedef SOCKET socket_t;
 #include <sys/select.h>
 typedef int socket_t;
 #endif
-
-struct ndx_ctx ndx;
 
 NDX_DEF(int, on_ndc_exit, int, i)
 {
@@ -68,13 +70,14 @@ void exit_all(int i) {
 
 void
 usage(char *prog) {
-	fprintf(stderr, "Usage: %s [-dr?] [-C PATH] [-u USER] [-k PATH] [-c PATH] [-p PORT]\n", prog);
+	fprintf(stderr, "Usage: %s [-dr?] [-C PATH] [-u USER] [-k PATH] [-c PATH] [-p PORT] [-B BYTES]\n", prog);
 	fprintf(stderr, "    Options:\n");
 	fprintf(stderr, "        -C PATH   changes directory to PATH before starting up.\n");
 	fprintf(stderr, "        -u USER   login as USER before starting up.\n");
 	fprintf(stderr, "        -k PATH   specify SSL certificate 'key' file\n");
 	fprintf(stderr, "        -c PATH   specify SSL certificate 'crt' file\n");
 	fprintf(stderr, "        -p PORT   specify server port\n");
+	fprintf(stderr, "        -B BYTES  maximum POST body size in bytes (default: 10485760)\n");
 	fprintf(stderr, "        -d        don't detach\n");
 	fprintf(stderr, "        -r        root multiplex mode\n");
 	fprintf(stderr, "        -?        display this message.\n");
@@ -89,7 +92,7 @@ main(int argc, char *argv[])
 
 	ndc_config.flags |= NDC_DETACH;
 
-	while ((c = getopt(argc, argv, "?dK:k:C:rp:s:"))
+	while ((c = getopt(argc, argv, "?dK:k:C:rp:s:B:"))
 			!= -1) switch (c)
 	{
 		case 'd': ndc_config.flags &= ~NDC_DETACH; break;
@@ -100,6 +103,7 @@ main(int argc, char *argv[])
 		case 'r': ndc_config.flags |= NDC_ROOT; break;
 		case 's': ndc_config.ssl_port = atoi(optarg);
 			  break;
+		case 'B': ndc_config.max_body_size = (size_t)strtoull(optarg, NULL, 10); break;
 		default:
 			  usage(*argv);
 			  return 1;
@@ -108,7 +112,7 @@ main(int argc, char *argv[])
 	optind = 1;
 
 #ifndef _WIN32
-	while ((c = getopt(argc, argv, "?dK:k:C:rp:s:"))
+	while ((c = getopt(argc, argv, "?dK:k:C:rp:s:B:"))
 			!= -1)
 	{
 		switch (c) {
@@ -150,27 +154,39 @@ main(int argc, char *argv[])
 }
 
 char *ndc_auth_check(socket_t fd) {
-	static char user[BUFSIZ];
-	char cookie[ENV_VALUE_LEN], *eq;
-	FILE *fp;
+	static char token[BUFSIZ];
+	char cookie[ENV_VALUE_LEN], *p, *eq, *end;
+	const char *username;
 
 	if (ndc_env_get(fd, cookie, "HTTP_COOKIE"))
 		return NULL;
 
-	eq = strchr(cookie, '=');
-	if (!eq)
-		return NULL;
+	/* Find QSESSION=<token> among potentially multiple cookies */
+	p = cookie;
+	while (p && *p) {
+		while (*p == ' ') p++;
+		eq = strchr(p, '=');
+		if (!eq) break;
+		if (eq - p == 8 && strncmp(p, "QSESSION", 8) == 0) {
+			eq++;
+			end = strchr(eq, ';');
+			if (end) {
+				size_t len = (size_t)(end - eq);
+				if (len >= sizeof(token)) len = sizeof(token) - 1;
+				strncpy(token, eq, len);
+				token[len] = '\0';
+			} else {
+				strncpy(token, eq, sizeof(token) - 1);
+				token[sizeof(token) - 1] = '\0';
+			}
+			username = call_get_session_user(token);
+			return username ? (char *)username : NULL;
+		}
+		p = strchr(eq, ';');
+		if (p) p++;
+	}
 
-	snprintf(user, sizeof(user), "./sessions/%s", eq + 1);
-	fp = fopen(user, "r");
-
-	if (!fp)
-		return NULL;
-
-	fscanf(fp, "%s", user);
-	fclose(fp);
-
-	return user;
+	return NULL;
 }
 
 void

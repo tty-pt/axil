@@ -459,6 +459,7 @@ ndc_auth(socket_t fd, char *username)
 	/* syserr(LOG_ERR, "ndc_auth %d %s", fd, username); */
 	strncpy(d->username, username, sizeof(d->username));
 	d->flags |= DF_AUTHENTICATED;
+	ndc_env_put(fd, "REMOTE_USER", d->username);
 	struct passwd *pw = getpwnam(d->username);
 	if (!pw)
 		return 1;

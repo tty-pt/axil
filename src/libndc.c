@@ -116,6 +116,8 @@ ndc_cb_t do_GET, do_POST, do_sh;
 static unsigned char *input;
 static size_t input_size = FIRST_INPUT_SIZE, input_len = 0;
 
+#define NDC_DEFAULT_MAX_BODY_SIZE (10UL * 1024UL * 1024UL)
+
 static char cgi_index[] = "./index.sh";
 struct timeval select_timeout, exec_timeout;
 
@@ -1718,6 +1720,51 @@ request_handle(socket_t fd, int argc, char *argv[], int req_flags)
 	}
 
 	headers_get(fd, &body_start, argv[argc]);
+
+	/* For POST with Content-Length, ensure the full body is buffered.
+	 * ndc_read() may return after reading only the headers if the body
+	 * arrives in a separate TCP segment. */
+	if (req_flags & NDC_POST) {
+		char clen_str[32] = {0};
+		ndc_env_get(fd, clen_str, "HTTP_CONTENT_LENGTH");
+		if (clen_str[0]) {
+			size_t content_length = strtoul(clen_str, NULL, 10);
+			size_t limit = ndc_config.max_body_size
+				? ndc_config.max_body_size
+				: NDC_DEFAULT_MAX_BODY_SIZE;
+
+			if (content_length > limit) {
+				ndc_header(fd, "Connection", "close");
+				ndc_set_flags(fd, DF_TO_CLOSE);
+				ndc_head(fd, 413);
+				ndc_close(fd);
+				return;
+			}
+
+			size_t headers_offset = (size_t)(argv[argc] - (char *)input);
+			size_t needed = headers_offset + body_start + 1 + content_length;
+			struct io *dio = &io[fd];
+			while (input_len < needed) {
+				char buf[BUFSIZ];
+				ssize_t n = dio->read(fd, buf, sizeof(buf), 0);
+				if (n <= 0) {
+					/* Client disconnected or lied about Content-Length */
+					ndc_close(fd);
+					return;
+				}
+				if (input_len + (size_t)n > input_size) {
+					char *old_base = (char *)input;
+					input_size = (input_len + (size_t)n) * 2;
+					input = realloc(input, input_size);
+					ptrdiff_t shift = (char *)input - old_base;
+					for (int i = 0; i <= argc; i++)
+						argv[i] += shift;
+				}
+				memcpy(input + input_len, buf, n);
+				input_len += (size_t)n;
+			}
+		}
+	}
 
 	if (ndc_platform && ndc_platform->auth_try)
 		ndc_platform->auth_try(fd);
