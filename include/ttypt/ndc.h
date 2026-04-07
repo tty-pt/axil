@@ -97,6 +97,7 @@ struct ndc_config {
 	unsigned port;
 	unsigned ssl_port;
 	ndc_handler_t *default_handler;
+	size_t max_body_size; /* 0 = use NDC_DEFAULT_MAX_BODY_SIZE (10 MB) */
 };
 
 typedef void ndc_cb_t(socket_t fd, int argc, char *argv[]);
