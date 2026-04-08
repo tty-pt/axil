@@ -1646,6 +1646,56 @@ ndc_match_pattern(const char *path_with_method, const char *document_uri, socket
 	return NULL;
 }
 
+/* Ensures the full POST body is present in the global `input` buffer.
+ * Returns 0 on success, -1 if the request was rejected (caller must return). */
+static int
+buffer_post_body(socket_t fd, int argc, char *argv[], size_t body_start)
+{
+	char clen_str[32] = {0};
+	ndc_env_get(fd, clen_str, "HTTP_CONTENT_LENGTH");
+	if (!clen_str[0])
+		return 0;
+
+	size_t content_length = strtoul(clen_str, NULL, 10);
+	size_t limit = ndc_config.max_body_size
+		? ndc_config.max_body_size
+		: NDC_DEFAULT_MAX_BODY_SIZE;
+
+	if (content_length > limit) {
+		ndc_header(fd, "Connection", "close");
+		ndc_set_flags(fd, DF_TO_CLOSE);
+		ndc_head(fd, 413);
+		ndc_close(fd);
+		return -1;
+	}
+
+	size_t headers_offset = (size_t)(argv[argc] - (char *)input);
+	size_t needed = headers_offset + body_start + 1 + content_length;
+	struct io *dio = &io[fd];
+
+	while (input_len < needed) {
+		char buf[BUFSIZ];
+		ssize_t n = dio->read(fd, buf, sizeof(buf), 0);
+		if (n <= 0) {
+			/* Client disconnected or lied about Content-Length */
+			ndc_close(fd);
+			return -1;
+		}
+		if (input_len + (size_t)n > input_size) {
+			char *old_base = (char *)input;
+			input_size = (input_len + (size_t)n) * 2;
+			input = realloc(input, input_size);
+			ptrdiff_t shift = (char *)input - old_base;
+			for (int i = 0; i <= argc; i++)
+				argv[i] += shift;
+		}
+		memcpy(input + input_len, buf, n);
+		input_len += (size_t)n;
+	}
+
+	return 0;
+}
+
 static inline int
 request_handle_trailing_slash(socket_t fd, char *document_uri)
 {
@@ -1725,45 +1775,8 @@ request_handle(socket_t fd, int argc, char *argv[], int req_flags)
 	 * ndc_read() may return after reading only the headers if the body
 	 * arrives in a separate TCP segment. */
 	if (req_flags & NDC_POST) {
-		char clen_str[32] = {0};
-		ndc_env_get(fd, clen_str, "HTTP_CONTENT_LENGTH");
-		if (clen_str[0]) {
-			size_t content_length = strtoul(clen_str, NULL, 10);
-			size_t limit = ndc_config.max_body_size
-				? ndc_config.max_body_size
-				: NDC_DEFAULT_MAX_BODY_SIZE;
-
-			if (content_length > limit) {
-				ndc_header(fd, "Connection", "close");
-				ndc_set_flags(fd, DF_TO_CLOSE);
-				ndc_head(fd, 413);
-				ndc_close(fd);
-				return;
-			}
-
-			size_t headers_offset = (size_t)(argv[argc] - (char *)input);
-			size_t needed = headers_offset + body_start + 1 + content_length;
-			struct io *dio = &io[fd];
-			while (input_len < needed) {
-				char buf[BUFSIZ];
-				ssize_t n = dio->read(fd, buf, sizeof(buf), 0);
-				if (n <= 0) {
-					/* Client disconnected or lied about Content-Length */
-					ndc_close(fd);
-					return;
-				}
-				if (input_len + (size_t)n > input_size) {
-					char *old_base = (char *)input;
-					input_size = (input_len + (size_t)n) * 2;
-					input = realloc(input, input_size);
-					ptrdiff_t shift = (char *)input - old_base;
-					for (int i = 0; i <= argc; i++)
-						argv[i] += shift;
-				}
-				memcpy(input + input_len, buf, n);
-				input_len += (size_t)n;
-			}
-		}
+		if (buffer_post_body(fd, argc, argv, body_start) < 0)
+			return;
 	}
 
 	if (ndc_platform && ndc_platform->auth_try)
