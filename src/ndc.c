@@ -2,7 +2,6 @@
 
 #include <unistd.h>
 #include <signal.h>
-#include <pwd.h>
 
 #include <ttypt/qsys.h>
 #include <ttypt/qmap.h>
@@ -17,6 +16,7 @@ NDX_DECL(const char *, get_session_user,
 #include <winsock2.h>
 typedef SOCKET socket_t;
 #else
+#include <pwd.h>
 #include <sys/select.h>
 typedef int socket_t;
 #endif

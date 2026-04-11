@@ -19,6 +19,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/types.h>
+#include <ttypt/qsys.h>
 
 #ifdef _WIN32
 #include <winsock2.h>
@@ -159,27 +160,27 @@ int ndc_ws_printf(socket_t fd, const char *fmt, ...);
 
 /* define these */
 /** Periodic update hook. */
-extern void ndc_update(unsigned long long dt) __attribute__((weak));
+extern void ndc_update(unsigned long long dt) WEAK;
 /** Called when a command is not found. */
-extern void ndc_vim(socket_t fd, int argc, char *argv[]) __attribute__((weak));
+extern void ndc_vim(socket_t fd, int argc, char *argv[]) WEAK;
 /** Called on accept; return value is ignored. */
-extern int ndc_accept(socket_t fd) __attribute__((weak));
+extern int ndc_accept(socket_t fd) WEAK;
 /** Called on websocket connect; return non-zero to accept. */
-extern int ndc_connect(socket_t fd) __attribute__((weak));
+extern int ndc_connect(socket_t fd) WEAK;
 /** Called on disconnect. */
-extern void ndc_disconnect(socket_t fd) __attribute__((weak));
+extern void ndc_disconnect(socket_t fd) WEAK;
 /** Called before a registered command handler. */
-extern void ndc_command(socket_t fd, int argc, char *argv[]) __attribute__((weak)); /* will run on any command */
+extern void ndc_command(socket_t fd, int argc, char *argv[]) WEAK; /* will run on any command */
 /** Called after a registered command handler. */
-extern void ndc_flush(socket_t fd, int argc, char *argv[]) __attribute__((weak)); /* will run after any command */
+extern void ndc_flush(socket_t fd, int argc, char *argv[]) WEAK; /* will run after any command */
 /** Return a username to authenticate the connection, or NULL. */
-extern char *ndc_auth_check(socket_t fd) __attribute__((weak));
+extern char *ndc_auth_check(socket_t fd) WEAK;
 /* TODO DESCRIBE */
-extern void ndc_fd_tick(socket_t fd) __attribute__((weak));
+extern void ndc_fd_tick(socket_t fd) WEAK;
 extern int ndc_parse(
     socket_t fd,
     unsigned char * input,
-    int nread) __attribute__((weak));
+    int nread) WEAK;
 
 /* write to descriptor (might not need) */
 /** Write raw bytes to a descriptor. Returns bytes written or -1. */

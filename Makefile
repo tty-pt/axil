@@ -1,4 +1,5 @@
-all := libndc ndc test test-mux test-auth
+all := libndc ndc test test-auth
+INSTALL_BIN := ndc
 
 LDLIBS-libndc-Linux := -lrt
 LDLIBS-libndc := -lqmap -lqsys -lcrypto -lssl -lndx
@@ -6,7 +7,6 @@ LDLIBS-libndc-Linux := -lc
 LDLIBS-libndc-Windows := -lws2_32
 LDLIBS-ndc := -lndc -lndx -lqsys
 LDLIBS-test := -lndc
-LDLIBS-test-mux := -lndc -lndx -lqsys
 LDLIBS-test-auth := -lndc -lqsys
 
 CFLAGS := -g

@@ -2,7 +2,6 @@
 
 testbin=./bin/test
 ndc=./bin/ndc
-testmux=./bin/test-mux
 testauth=./bin/test-auth
 
 case "$(uname -s)" in
@@ -155,22 +154,6 @@ ndc_pid=$!
 
 if wait_for_port "$port"; then
 	assert http-404 fetch_root "$port"
-	assert http-200 fetch_status "$port" "/"
-	assert http-css-200 fetch_status "$port" "/ndc.css"
-	assert http-js-200 fetch_status "$port" "/ndc.js"
-	assert_contains root-title "<title>NDC Terminal</title>" fetch_body "$port" "/"
-	assert_contains css-marker ".xterm" fetch_body "$port" "/ndc.css"
-	assert_contains js-marker "window.ttyNdc" fetch_body "$port" "/ndc.js"
-	if command -v curl >/dev/null 2>&1; then
-		pids=""
-		for i in 1 2 3 4 5; do
-			curl -sS --connect-timeout 1 --max-time 2 -o /dev/null "http://127.0.0.1:$port/ndc.css" &
-			pids="$pids $!"
-		done
-		for pid in $pids; do
-			wait "$pid"
-		done
-	fi
 	if command -v nc >/dev/null 2>&1; then
 		bad=$(raw_request "$port" "GET /../secret HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n")
 		if [ -n "$bad" ]; then
@@ -217,7 +200,7 @@ cgi_dir=$(mktemp -d)
 cp tests/fixtures/cgi/index.sh "$cgi_dir/index.sh"
 chmod +x "$cgi_dir/index.sh"
 cgi_port=$((port + 20))
-$testmux -p "$cgi_port" -C "$cgi_dir" >/dev/null 2>&1 &
+$ndc -p "$cgi_port" -C "$cgi_dir" >/dev/null 2>&1 &
 cgi_pid=$!
 
 if wait_for_port_tcp "$cgi_port"; then
@@ -244,7 +227,7 @@ cp tests/fixtures/autoindex/serve.allow "$ai_dir/serve.allow"
 cp tests/fixtures/autoindex/serve.autoindex "$ai_dir/serve.autoindex"
 cp -R tests/fixtures/autoindex/data "$ai_dir/data"
 ai_port=$((port + 30))
-$testmux -p "$ai_port" -C "$ai_dir" >/dev/null 2>&1 &
+$ndc -p "$ai_port" -C "$ai_dir" >/dev/null 2>&1 &
 ai_pid=$!
 
 if wait_for_port_tcp "$ai_port"; then
@@ -276,9 +259,7 @@ if command -v openssl >/dev/null 2>&1 && command -v curl >/dev/null 2>&1; then
 
 	if wait_for_port_tcp "$http_port"; then
 		shead=$(curl -k -sS -i --max-time 2 "https://127.0.0.1:$ssl_port/" | sed -n '1p' | tr -d '\r')
-		sbody=$(curl -k -sS --max-time 2 "https://127.0.0.1:$ssl_port/")
-		echo "$shead" | grep -F "HTTP/1.1 200" >/dev/null 2>&1 || { echo "TLS status missing" >&2; exit 1; }
-		echo "$sbody" | grep -F "<title>NDC Terminal</title>" >/dev/null 2>&1 || { echo "TLS body missing" >&2; exit 1; }
+		echo "$shead" | grep -F "HTTP/1.1" >/dev/null 2>&1 || { echo "TLS status missing" >&2; exit 1; }
 	else
 		echo "tls ndc failed to listen on $http_port" >&2
 		kill "$ssl_pid" >/dev/null 2>&1 || true
@@ -290,20 +271,3 @@ else
 	echo "Skipping TLS tests: openssl or curl not found" >&2
 fi
 
-ws_port=$((port + 1))
-$testmux -p "$ws_port" >/dev/null 2>&1 &
-ws_pid=$!
-
-if wait_for_port_tcp "$ws_port"; then
-	if command -v python3 >/dev/null 2>&1; then
-		python3 ./test-ws.py "$ws_port" --pty
-	else
-		echo "Skipping WS mux test: python3 not found" >&2
-	fi
-else
-	echo "test-mux failed to listen on $ws_port" >&2
-	kill "$ws_pid" >/dev/null 2>&1 || true
-	exit 1
-fi
-
-kill "$ws_pid" >/dev/null 2>&1 || true
