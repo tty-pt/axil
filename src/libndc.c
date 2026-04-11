@@ -242,8 +242,6 @@ ndc_close(socket_t fd)
 	if (d->flags & DF_WEBSOCKET)
 		ws_close(fd);
 
-	call_telnet_cleanup(fd);
-
 	if (ndc_platform && ndc_platform->cleanup_descr)
 		ndc_platform->cleanup_descr(d);
 
@@ -832,6 +830,11 @@ ndc_tunnel_close_raw(socket_t fd)
 		ndc_raw_descr_reset(peer);
 }
 
+void ndc_clear_active(socket_t cfd)
+{
+  FD_CLR(cfd, &fds_active);
+}
+
 static inline void
 descr_proc_reads(void)
 {
@@ -857,8 +860,10 @@ descr_proc_reads(void)
 
 		/* Externally-watched fd: dispatch to module hook */
 		if (d->flags & DF_EXTERN) {
-			if (call_on_fd_tick(i) < 0)
-				FD_CLR(i, &fds_active);
+      if (ndc_fd_tick)
+        ndc_fd_tick(i);
+      FD_CLR(i, &fds_active);
+
 			continue;
 		}
 
@@ -1407,11 +1412,9 @@ request_handle_websocket(socket_t fd)
 	d->flags |= DF_WEBSOCKET;
 	dio->read = ws_read;
 	dio->write = ws_write;
-	TELNET_CMD(fd, IAC, DO, TELOPT_NAWS);
-	if (!ndc_connect || ndc_connect(fd)) {
+
+	if (!ndc_connect || ndc_connect(fd))
 		d->flags |= DF_CONNECTED;
-		call_telnet_connected(fd);
-	}
 
 	return 1;
 }

@@ -8,6 +8,7 @@ CC      ?= cc
 CFLAGS  ?= -g -O0
 CFLAGS  += -fPIC \
 	-I$(NDC_INCDIR) \
+	-Iinclude \
 	-DNDC_PREFIX=\"$(NDC_PREFIX)\" \
 	-DNDC_HTDOCS=\"$(NDC_HTDOCS)\"
 
@@ -40,6 +41,8 @@ $(TARGET): $(SRC)
 install: $(TARGET)
 	mkdir -p $(INSTALL_DIR)
 	cp $(HTDOCS_SRC)/* $(INSTALL_DIR)/
+	mkdir -p $(NDC_INCDIR)/ttypt
+	cp include/ttypt/ndc-mux.h $(NDC_INCDIR)/ttypt/ndc-mux.h
 
 clean:
 	rm -f $(TARGET)

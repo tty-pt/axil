@@ -3,16 +3,24 @@
 		get_ndx_ptr;
 		ndx_install;
 		ndx_open;
-		ndc_pty;
-		do_sh;
+		ndc_mux_exec;
+		ndc_mux_exec_adapter;
+		ndc_mux_exec_adapter_call;
+		ndc_mux_shell;
+		ndc_mux_shell_adapter;
+		ndc_mux_shell_adapter_call;
 		telnet_connected;
 		telnet_connected_adapter;
+		telnet_connected_adapter_call;
 		telnet_parse;
 		telnet_parse_adapter;
+		telnet_parse_adapter_call;
 		on_fd_tick;
 		on_fd_tick_adapter;
+		on_fd_tick_adapter_call;
 		telnet_cleanup;
 		telnet_cleanup_adapter;
+		telnet_cleanup_adapter_call;
 	local:
 		*;
 };

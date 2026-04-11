@@ -10,7 +10,8 @@
 
 struct ndx_ctx ndx;
 
-NDX_DECL(const char *, get_session_user, const char *, token);
+NDX_DECL(const char *, get_session_user,
+    const char *, token)
 
 #ifdef _WIN32
 #include <winsock2.h>
@@ -51,6 +52,12 @@ NDX_DEF(int, on_ndc_connect, socket_t, fd)
 }
 
 NDX_DEF(int, on_ndc_disconnect, socket_t, fd)
+{
+  (void) fd;
+  return 0;
+}
+
+NDX_DEF(int, on_ndc_tick, socket_t, fd)
 {
   (void) fd;
   return 0;
@@ -237,4 +244,8 @@ void ndc_disconnect(socket_t fd) {
 		return;
 
 	call_on_ndc_disconnect(fd);
+}
+
+void ndc_fd_tick(socket_t fd) {
+  call_on_ndc_tick(fd);
 }
