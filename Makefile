@@ -10,8 +10,6 @@ LDLIBS-test-mux := -lndc -lndx -lqsys
 LDLIBS-test-auth := -lndc -lqsys
 
 CFLAGS := -g
-LDFLAGS-libndc-Darwin := -Wl,-undefined,dynamic_lookup -Wl,-exported_symbols_list,libndc.exports
-LDFLAGS-libndc-Linux := -Wl,--version-script=libndc.map
 CFLAGS-Windows := -masm=intel
 
 libndc-obj-y-Linux := src/ndc-posix.o
