@@ -2,7 +2,6 @@
 
 #include <unistd.h>
 #include <signal.h>
-#include <pwd.h>
 
 #include <ttypt/qsys.h>
 #include <ttypt/qmap.h>
@@ -17,6 +16,7 @@ NDX_DECL(const char *, get_session_user,
 #include <winsock2.h>
 typedef SOCKET socket_t;
 #else
+#include <pwd.h>
 #include <sys/select.h>
 typedef int socket_t;
 #endif
@@ -247,8 +247,12 @@ void ndc_command(socket_t fd, int argc, char *argv[])
 
 int ndc_connect(socket_t fd) {
 	if (ndc_config.flags & NDC_AUTOAUTH) {
+#ifndef _WIN32
 		struct passwd *pw = getpwuid(geteuid());
 		ndc_auth(fd, pw ? pw->pw_name : "root");
+#else
+		ndc_auth(fd, "root");
+#endif
 	}
 	call_on_ndc_connect(fd);
 	return !!(ndc_config.flags & NDC_AUTOAUTH);

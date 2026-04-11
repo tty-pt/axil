@@ -1,7 +1,7 @@
 # ndc
-> HTTP(S) + WS(S) + Terminal MUX
+> HTTP(S) + WS(S) + extensible network daemon library
 
-A cross-platform C library for building network daemons - HTTP servers, WebSocket servers, telnet-like services, terminal multiplexers, or custom network applications.
+A cross-platform C library for building network daemons - HTTP servers, WebSocket servers, telnet-like services, or custom network applications.
 
 From <a href="https://github.com/tty-pt/neverdark">NeverDark</a> • Powers [tty.pt](https://tty.pt)
 
@@ -10,7 +10,7 @@ From <a href="https://github.com/tty-pt/neverdark">NeverDark</a> • Powers [tty
 ## What is ndc?
 
 **`libndc`** - C library for building network daemons  
-**`ndc`** - Standalone server binary with HTTP/WS/terminal mux
+**`ndc`** - Standalone server binary with HTTP/WS support
 
 Build telnet-like servers, custom protocol handlers, HTTP APIs, WebSocket apps, or anything that needs persistent network connections with an event loop.
 
@@ -162,7 +162,6 @@ void ndc_update(unsigned long long dt) {
 |---------|-------------|
 | `do_GET` | HTTP GET request handler |
 | `do_POST` | HTTP POST request handler |
-| `do_sh` | Shell PTY handler (POSIX-only) |
 
 ### Hook Functions (Optional)
 
@@ -294,48 +293,15 @@ printf "QUERY_STRING=%s\n" "$QUERY_STRING"
 
 Control access with `serve.allow` and `serve.autoindex` files.
 
-## NPM for Web Terminal
+## Modules
 
-Install the package:
+For browser terminal / WebSocket PTY multiplexer support, see [libndc-mux](mods/mux/).
 
-```sh
-npm install @tty-pt/ndc
-```
-
-JavaScript/TypeScript API:
-
-```js
-import { create } from "@tty-pt/ndc";
-
-// Create terminal instance
-const term = create(document.getElementById("terminal"), {
-  proto: "ws",        // or "wss" for secure
-  port: 4201,
-  sub: {
-    onOpen: (term, ws) => {
-      console.log("Connected to server");
-    },
-    onClose: (ws) => {
-      console.log("Disconnected, reconnecting...");
-    },
-    onMessage: (ev, arr) => {
-      // Return true to continue default processing
-      return true;
-    },
-    cols: 80,
-    rows: 25,
-  },
-  debug: false,
-});
-```
-
-See `types/ndc.d.ts` for full TypeScript definitions.
-
-## Documentation
+---
 
 - Man pages: `man ndc` and `man ndc.3`
 - Full API: `include/ttypt/ndc.h`
-- Examples: `src/test-*.c`
+- Examples: `src/test.c`, `src/test-auth.c`
 
 ## Plugin System
 
@@ -354,4 +320,4 @@ The binary automatically loads `core.so` at startup. Plugins can hook into lifec
 ---
 
 **Installation**: See [install docs](https://github.com/tty-pt/ci/blob/main/docs/install.md)  
-**Entry points**: `src/ndc.c` (native), `ndc-cli.js` (npm)
+**Entry points**: `src/ndc.c` (native)

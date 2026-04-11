@@ -16,7 +16,7 @@ jobs:
       deps_pacman_mingw: "mingw-w64-libqmap,mingw-w64-libndx,mingw-w64-openssl"
       deps_rpm: "libqmap,libndx,openssl-devel"
       deps_brew: "libqmap,libndx,openssl"
-      deps_openbsd: "libqmap,libndx,openssl-3.5.4v0"
+      deps_openbsd: "libqmap,libndx,openssl"
       deps_winget: "mingw-w64-x86_64-openssl"
       deps_winget_tty: "libqsys,libqmap,libndx"
       publish_to: "deb,apk,rpm,brew,openbsd,winget"

@@ -2,8 +2,8 @@
 
 #include <stdio.h>
 
-/* Stub implementations for weak symbols (needed for Windows/MinGW linking) */
-#ifdef _WIN32
+/* Stub implementations for weak symbols (needed for Windows/MinGW/macOS linking) */
+#if defined(_WIN32) || defined(__APPLE__)
 void ndc_update(unsigned long long dt) { (void)dt; }
 void ndc_vim(socket_t fd, int argc, char *argv[]) { (void)fd; (void)argc; (void)argv; }
 int ndc_accept(socket_t fd) { (void)fd; return 0; }
@@ -71,7 +71,7 @@ main(void)
 	expect_sym_fn("ndc_exec", (void (*)(void)) ndc_exec);
 	expect_sym_data("ndc_execbuf", ndc_execbuf);
 
-#ifdef _WIN32
+#if defined(_WIN32) || defined(__APPLE__)
 	expect_weak("ndc_update", 1);
 	expect_weak("ndc_vim", 1);
 	expect_weak("ndc_accept", 1);
