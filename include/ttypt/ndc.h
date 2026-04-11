@@ -174,6 +174,12 @@ extern void ndc_command(socket_t fd, int argc, char *argv[]) __attribute__((weak
 extern void ndc_flush(socket_t fd, int argc, char *argv[]) __attribute__((weak)); /* will run after any command */
 /** Return a username to authenticate the connection, or NULL. */
 extern char *ndc_auth_check(socket_t fd) __attribute__((weak));
+/* TODO DESCRIBE */
+extern void ndc_fd_tick(socket_t fd) __attribute__((weak));
+extern int ndc_parse(
+    socket_t fd,
+    unsigned char * input,
+    int nread) __attribute__((weak));
 
 /* write to descriptor (might not need) */
 /** Write raw bytes to a descriptor. Returns bytes written or -1. */
@@ -273,6 +279,8 @@ void ndc_sendfile(socket_t fd, const char *path);
 void ndc_exec(socket_t cfd, char * const args[],
 		cmd_cb_t callback, void *input,
 		size_t input_len);
+
+void ndc_clear_active(socket_t cfd);
 
 /** @} */
 #endif

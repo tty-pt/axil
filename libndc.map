@@ -48,7 +48,10 @@
 		ndc_get_pw;
 		ndc_fd_watch;
 		ndc_fd_unwatch;
+		ndc_fd_tick;
 		ndc_fork_child_reset;
+		ndc_clear_active;
+		ndc_parse;
 	local:
 		*;
 };

@@ -60,7 +60,22 @@ NDX_DEF(int, on_ndc_disconnect, socket_t, fd)
 NDX_DEF(int, on_ndc_tick, socket_t, fd)
 {
   (void) fd;
-  return 0;
+  int ret;
+  ndx_last(&ret);
+  return ret;
+}
+
+NDX_DEF(int, on_ndc_parse,
+    socket_t, fd,
+    unsigned char *, input,
+    int, nread)
+{
+  (void) fd;
+  (void) input;
+  (void) nread;
+  int ret;
+  ndx_last(&ret);
+  return ret;
 }
 
 void exit_all(int i) {
@@ -248,4 +263,12 @@ void ndc_disconnect(socket_t fd) {
 
 void ndc_fd_tick(socket_t fd) {
   call_on_ndc_tick(fd);
+}
+
+int ndc_parse(
+    socket_t fd,
+    unsigned char * input,
+    int nread)
+{
+  return call_on_ndc_parse(fd, input, nread);
 }

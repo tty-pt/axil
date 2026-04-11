@@ -252,8 +252,7 @@ do_sh(socket_t fd,
 
 /* NDX hook implementations */
 
-NDX_DEF(int, telnet_connected,
-    socket_t, fd)
+NDX_DEF(int, on_ndc_connect, socket_t, fd)
 {
   struct mux_state s;
   memset(&s, 0, sizeof(s));
@@ -263,6 +262,7 @@ NDX_DEF(int, telnet_connected,
   /* Send initial TELNET negotiations */
   TELNET_CMD(fd, IAC, WILL, TELOPT_ECHO);
   TELNET_CMD(fd, IAC, WONT, TELOPT_SGA);
+  TELNET_CMD(fd, IAC, DO, TELOPT_NAWS);
 
   s.tty.c_lflag = ICANON | ECHO | ECHOK | ECHOCTL;
   s.tty.c_iflag = IGNCR;
@@ -294,7 +294,7 @@ NDX_DEF(int, telnet_connected,
   return 0;
 }
 
-NDX_DEF(int, telnet_parse,
+NDX_DEF(int, on_ndc_parse,
     socket_t, fd,
     unsigned char *, input,
     int, nread)
@@ -346,19 +346,22 @@ NDX_DEF(int, telnet_parse,
   return i;
 }
 
-NDX_DEF(int, on_fd_tick, socket_t, fd)
-{
+NDX_DEF(int, on_ndc_tick, socket_t, fd) {
   /* fd here is an externally-watched fd — look up the client fd */
   const uint32_t *cfd_p = qmap_get(mux_pty_map, &(uint32_t){(uint32_t)fd});
 
-  if (!cfd_p)
+  if (!cfd_p) {
+    ndc_clear_active(fd);
     return -1;
+  }
 
   socket_t cfd = (socket_t)*cfd_p;
 
   struct mux_state *s = mux_get(cfd);
-  if (!s)
+  if (!s) {
+    ndc_clear_active(fd);
     return -1;
+  }
 
   static char buf[BUFSIZ * 4];
   int ret, status;
@@ -375,23 +378,26 @@ NDX_DEF(int, on_fd_tick, socket_t, fd)
     case -1:
       if (errno == EAGAIN || errno == EIO)
         return 0;
+      ndc_clear_active(fd);
       return -1;
     default:
       buf[ret] = '\0';
       ndc_write(cfd, buf, ret);
       ndc_tty_update(cfd);
-      return ret;
+      goto exit;
   }
 
   if (s->pid > 0)
     kill(s->pid, SIGKILL);
 
   s->pid = -1;
+exit:
+  if (ret < 0)
+    ndc_clear_active(fd);
   return ret;
 }
 
-NDX_DEF(int, telnet_cleanup, socket_t, fd)
-{
+NDX_DEF(int, on_ndc_disconnect, socket_t, fd) {
   struct mux_state *s = mux_get(fd);
   if (!s)
     return 0;

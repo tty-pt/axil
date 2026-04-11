@@ -51,7 +51,6 @@
 #define	TCSANOW		0
 #else
 #include <arpa/inet.h>
-#include <arpa/telnet.h>
 #include <fnmatch.h>
 #include <grp.h>
 #include <netinet/in.h>
@@ -75,11 +74,6 @@
 #include <ttypt/qsys.h>
 
 #include "ws.c"
-
-/* NDX hooks for telnet/PTY lifecycle — implemented in the mux module.
- * NDX_DECL generates the call_*() wrappers without registering a stub
- * adapter, so the mux module's real implementations are not shadowed. */
-#include "../include/ttypt/ndc-telnet.h"
 
 #define CERT_MASK 0x1F
 #define MIME_MASK 0x3F
@@ -734,10 +728,8 @@ descr_read(socket_t fd)
 
 	/* fprintf(stderr, "descr_read %d %d %s\n", d->fd, ret, input); */
 
-	int i = call_telnet_parse(fd, input, ret);
-
-	if (i < 0)
-		return 0;
+  if (ndc_parse && ndc_parse(fd, input, ret) < 0)
+    return 0;
 
 	return cmd_parse(fd, (char *) input, ret);
 }
@@ -862,8 +854,6 @@ descr_proc_reads(void)
 		if (d->flags & DF_EXTERN) {
       if (ndc_fd_tick)
         ndc_fd_tick(i);
-      FD_CLR(i, &fds_active);
-
 			continue;
 		}
 

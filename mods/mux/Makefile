@@ -12,9 +12,9 @@ CFLAGS  += -fPIC \
 	-DNDC_PREFIX=\"$(NDC_PREFIX)\" \
 	-DNDC_HTDOCS=\"$(NDC_HTDOCS)\"
 
-LDFLAGS_LINUX   := -Wl,--version-script=libndc-mux.map
-LDFLAGS_DARWIN  := -Wl,-undefined,dynamic_lookup \
-	-Wl,-exported_symbols_list,libndc-mux.exports
+# LDFLAGS_LINUX   := -Wl,--version-script=libndc-mux.map
+# LDFLAGS_DARWIN  := -Wl,-undefined,dynamic_lookup \
+# 	-Wl,-exported_symbols_list,libndc-mux.exports
 
 UNAME := $(shell uname -s)
 ifeq ($(UNAME),Darwin)
