@@ -9,6 +9,8 @@
 #include "../include/iio.h"
 #include "ndc-internal.h"
 
+#include <ttypt/ndx.h>
+
 #include <ctype.h>
 #include <errno.h>
 #include <fcntl.h>
@@ -73,6 +75,11 @@
 #include <ttypt/qsys.h>
 
 #include "ws.c"
+
+/* NDX hooks for telnet/PTY lifecycle — implemented in the mux module.
+ * NDX_DECL generates the call_*() wrappers without registering a stub
+ * adapter, so the mux module's real implementations are not shadowed. */
+#include "../include/ttypt/ndc-telnet.h"
 
 #define CERT_MASK 0x1F
 #define MIME_MASK 0x3F
@@ -234,6 +241,8 @@ ndc_close(socket_t fd)
 
 	if (d->flags & DF_WEBSOCKET)
 		ws_close(fd);
+
+	call_telnet_cleanup(fd);
 
 	if (ndc_platform && ndc_platform->cleanup_descr)
 		ndc_platform->cleanup_descr(d);
@@ -699,15 +708,6 @@ cmd_parse(socket_t fd, char *cmd, size_t len)
 	return len;
 }
 
-static inline void
-pty_open(socket_t fd)
-{
-	TELNET_CMD(fd, IAC, WILL, TELOPT_ECHO);
-	TELNET_CMD(fd, IAC, WONT, TELOPT_SGA);
-
-	if (ndc_platform && ndc_platform->pty_open)
-		ndc_platform->pty_open(fd);
-}
 
 static int
 descr_read(socket_t fd)
@@ -736,37 +736,10 @@ descr_read(socket_t fd)
 
 	/* fprintf(stderr, "descr_read %d %d %s\n", d->fd, ret, input); */
 
-	int i = 0;
+	int i = call_telnet_parse(fd, input, ret);
 
-	for (; i < ret && input[i] != IAC; i++);
-
-	if (i == ret)
-		i = 0;
-
-	while (i < ret && input[i + 0] == IAC) if (input[i + 1] == SB && input[i + 2] == TELOPT_NAWS) {
-		int skip = 9;
-		if (ndc_platform && ndc_platform->handle_naws)
-			skip = ndc_platform->handle_naws(fd, input + i);
-		i += skip;
-	} else if (input[i + 1] == DO && input[i + 2] == TELOPT_SGA) {
-		/* this must change pty tty settings as well. Not just reply */
-		/* TELNET_CMD(IAC, WONT, TELOPT_ECHO, IAC, WILL, TELOPT_SGA); */
-		i += 3;
-	} else if (input[i + 1] == DO) {
-		/* TELNET_CMD(IAC, WILL, input[i + 2]); */
-		i += 3;
-	} else if (input[i + 1] == DONT) {
-		/* TELNET_CMD(IAC, WONT, input[i + 2]); */
-		i += 3;
-	} else if (input[i + 1] == DO || input[i + 1] == DONT || input[i + 1] == WILL)
-		i += 3;
-	else
-		i++;
-
-	if (ndc_platform && ndc_platform->pty_write_input) {
-		if (ndc_platform->pty_write_input(fd, input, i, ret))
-			return 0;
-	}
+	if (i < 0)
+		return 0;
 
 	return cmd_parse(fd, (char *) input, ret);
 }
@@ -784,7 +757,7 @@ descr_proc_writes(void)
 		if (!FD_ISSET(i, &fds_write)
 				|| i == srv_fd
 				|| i == srv_ssl_fd
-				|| d->pty == -2)
+				|| (d->flags & DF_EXTERN))
 			continue;
 
 		if (d->remaining_len)
@@ -882,9 +855,9 @@ descr_proc_reads(void)
 		if (d->fd != i)
 			continue;
 
-		/* PTY */
-		if (d->pty == -2 && ndc_platform && ndc_platform->pty_read) {
-			if (ndc_platform->pty_read(d->fd) < 0)
+		/* Externally-watched fd: dispatch to module hook */
+		if (d->flags & DF_EXTERN) {
+			if (call_on_fd_tick(i) < 0)
 				FD_CLR(i, &fds_active);
 			continue;
 		}
@@ -1437,7 +1410,7 @@ request_handle_websocket(socket_t fd)
 	TELNET_CMD(fd, IAC, DO, TELOPT_NAWS);
 	if (!ndc_connect || ndc_connect(fd)) {
 		d->flags |= DF_CONNECTED;
-		pty_open(fd);
+		call_telnet_connected(fd);
 	}
 
 	return 1;
@@ -1855,8 +1828,8 @@ request_handle(socket_t fd, int argc, char *argv[], int req_flags)
 	}
 
 	if (!(d->flags & DF_WEBSOCKET)) {
-		/* if (request_handle_websocket(fd)) */
-		/* 	return; */
+		if (request_handle_websocket(fd))
+			return;
 		d->flags |= DF_TO_CLOSE;
 	}
 
@@ -2012,6 +1985,43 @@ ndc_set_flags(socket_t fd, int flags)
 {
 	descr_map[fd].flags = flags;
 }
+
+#ifndef _WIN32
+int
+ndc_get_pw(socket_t fd, struct passwd *out)
+{
+	struct descr *d = &descr_map[fd];
+	if (!(d->flags & DF_AUTHENTICATED))
+		return -1;
+	*out = d->pw;
+	out->pw_name  = d->pw.pw_name  ? strdup(d->pw.pw_name)  : NULL;
+	out->pw_shell = d->pw.pw_shell ? strdup(d->pw.pw_shell) : NULL;
+	out->pw_dir   = d->pw.pw_dir   ? strdup(d->pw.pw_dir)   : NULL;
+	return 0;
+}
+
+void
+ndc_fd_watch(socket_t fd)
+{
+	struct descr *d = &descr_map[fd];
+	d->fd = fd;
+	d->flags |= DF_EXTERN;
+	FD_SET(fd, &fds_active);
+}
+
+void
+ndc_fd_unwatch(socket_t fd)
+{
+	FD_CLR(fd, &fds_active);
+	FD_CLR(fd, &fds_read);
+}
+
+void
+ndc_fork_child_reset(void)
+{
+	do_cleanup = 0;
+}
+#endif
 
 
 __attribute__((constructor)) static void

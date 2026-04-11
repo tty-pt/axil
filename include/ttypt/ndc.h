@@ -28,7 +28,6 @@ typedef SOCKET socket_t;
 typedef int socket_t;
 #endif
 
-
 /** Max key size for request environment. */
 #define ENV_KEY_LEN 128
 /** Maximum environment string size. */
@@ -54,7 +53,8 @@ enum descr_flags {
 	/** Waiting for upstream websocket upgrade response. */
 	DF_WS_WAITING = 128,
 	DF_WS_PROXY_PENDING = 256,
-	// RESERVED = 0x100,
+	/** Externally-watched fd: skip client processing, dispatch via on_fd_tick. */
+	DF_EXTERN = 512,
 };
 
 /** Server configuration flags. */
@@ -69,6 +69,8 @@ enum ndc_srv_flags {
 	NDC_SSL_ONLY = 8,
 	/** Detach into the background. */
 	NDC_DETACH = 16,
+	/** Auto-authenticate all WebSocket connections (dev/testing only). */
+	NDC_AUTOAUTH = 32,
 };
 
 /** Request flags used internally. */
@@ -184,10 +186,7 @@ int ndc_writef(socket_t fd, const char *fmt, ...);
 /** Broadcast a message to all connected descriptors. */
 void ndc_wall(const char *msg);
 
-ndc_cb_t do_GET, do_POST, do_sh;
-
-/** Spawn a PTY-backed command for fd (POSIX-only). */
-void ndc_pty(socket_t fd, char * const args[]);
+ndc_cb_t do_GET, do_POST;
 
 /** Get descriptor flags. */
 int ndc_flags(socket_t fd);
@@ -222,6 +221,40 @@ int ndc_env_put(socket_t fd, char *key, char *value);
 /** Get HTTP status text for a status code. Returns "Unknown" for invalid codes. */
 const char *ndc_status_text(int code);
 
+#ifndef _WIN32
+#include <pwd.h>
+
+/** Copy the authenticated user's passwd entry for fd into *out (POSIX-only).
+ *  Returns 0 on success, -1 if fd is not authenticated. */
+int ndc_get_pw(socket_t fd, struct passwd *out);
+
+/** Add fd to the server's active (select) watch set as an externally-managed
+ *  fd. Sets DF_EXTERN so the main loop dispatches it via on_fd_tick rather
+ *  than treating it as a client connection (POSIX-only). */
+void ndc_fd_watch(socket_t fd);
+
+/** Remove fd from the server's active and read watch sets (POSIX-only). */
+void ndc_fd_unwatch(socket_t fd);
+
+/** Reset the cleanup flag in a forked child process (POSIX-only).
+ *  Must be called immediately after fork() in the child. */
+void ndc_fork_child_reset(void);
+
+/** Send a raw TELNET command sequence over fd (POSIX-only). */
+static inline void
+ndc_send_telnet_cmd(socket_t fd, const unsigned char *command, size_t cmd_len)
+{
+	ndc_write(fd, (void *)command, cmd_len);
+}
+
+/** Build and send a TELNET command from a literal byte sequence. */
+#define TELNET_CMD(fd, ...) do { \
+	unsigned char _tc[] = { __VA_ARGS__ }; \
+	ndc_send_telnet_cmd(fd, _tc, sizeof(_tc)); \
+} while (0)
+
+#endif /* !_WIN32 */
+
 /** Add a response header. Call before ndc_head(). */
 void ndc_header(socket_t fd, const char *key, const char *value);
 
@@ -240,5 +273,6 @@ void ndc_sendfile(socket_t fd, const char *path);
 void ndc_exec(socket_t cfd, char * const args[],
 		cmd_cb_t callback, void *input,
 		size_t input_len);
+
 /** @} */
 #endif

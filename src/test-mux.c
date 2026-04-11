@@ -5,6 +5,10 @@
 #include <stdlib.h>
 #include <unistd.h>
 
+#include <ttypt/ndx.h>
+
+struct ndx_ctx ndx;
+
 int
 ndc_connect(socket_t fd)
 {
@@ -40,7 +44,10 @@ main(int argc, char *argv[])
 	ndc_register("GET", do_GET, CF_NOAUTH | CF_NOTRIM);
 	ndc_register("PRI", do_GET, CF_NOAUTH | CF_NOTRIM);
 	ndc_register("POST", do_POST, CF_NOAUTH | CF_NOTRIM);
-	ndc_register("sh", do_sh, CF_NOAUTH | CF_NOTRIM);
+	/* "sh" command is registered by the mux module */
+
+	ndx_init();
+	ndx_load("./mods/mux/libndc-mux");
 
 	return ndc_main();
 }

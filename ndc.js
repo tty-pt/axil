@@ -11,7 +11,7 @@ function create(element, options = {}) {
   const {
     proto = location.protocol === "https:" ? "wss" : "ws",
     port = window.location.port, 
-    url = proto + "://" + window.location.hostname + ":" + port,
+    url = proto + "://" + window.location.hostname + ":" + port + '/terminal',
   } = options;
 
   let sub = options.sub ?? {

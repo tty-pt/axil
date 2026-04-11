@@ -17,8 +17,6 @@ _ndc_writef
 _ndc_wall
 _do_GET
 _do_POST
-_do_sh
-_ndc_pty
 _ndc_flags
 _ndc_close
 _ndc_set_flags
@@ -38,3 +36,7 @@ _ndc_body
 _ndc_sendfile
 _ndc_exec
 _ndc_execbuf
+_ndc_get_pw
+_ndc_fd_watch
+_ndc_fd_unwatch
+_ndc_fork_child_reset

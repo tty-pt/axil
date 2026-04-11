@@ -25,8 +25,6 @@
 		ndc_wall;
 		do_GET;
 		do_POST;
-		do_sh;
-		ndc_pty;
 		ndc_flags;
 		ndc_close;
 		ndc_set_flags;
@@ -47,6 +45,10 @@
 		ndc_sendfile;
 		ndc_exec;
 		ndc_execbuf;
+		ndc_get_pw;
+		ndc_fd_watch;
+		ndc_fd_unwatch;
+		ndc_fork_child_reset;
 	local:
 		*;
 };

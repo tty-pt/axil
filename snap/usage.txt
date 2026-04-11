@@ -1,10 +1,13 @@
-Usage: ./bin/ndc [-dr?] [-C PATH] [-u USER] [-k PATH] [-c PATH] [-p PORT]
+Usage: ./bin/ndc [-Adr?] [-C PATH] [-u USER] [-k PATH] [-c PATH] [-p PORT] [-B BYTES] [-m MODS]
     Options:
         -C PATH   changes directory to PATH before starting up.
         -u USER   login as USER before starting up.
         -k PATH   specify SSL certificate 'key' file
         -c PATH   specify SSL certificate 'crt' file
         -p PORT   specify server port
+        -B BYTES  maximum POST body size in bytes (default: 10485760)
+        -m MODS   colon-separated list of module paths to load
+        -A        auto-authenticate all WebSocket connections
         -d        don't detach
         -r        root multiplex mode
         -?        display this message.

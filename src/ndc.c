@@ -2,6 +2,7 @@
 
 #include <unistd.h>
 #include <signal.h>
+#include <pwd.h>
 
 #include <ttypt/qsys.h>
 #include <ttypt/qmap.h>
@@ -70,7 +71,7 @@ void exit_all(int i) {
 
 void
 usage(char *prog) {
-	fprintf(stderr, "Usage: %s [-dr?] [-C PATH] [-u USER] [-k PATH] [-c PATH] [-p PORT] [-B BYTES]\n", prog);
+	fprintf(stderr, "Usage: %s [-Adr?] [-C PATH] [-u USER] [-k PATH] [-c PATH] [-p PORT] [-B BYTES] [-m MODS]\n", prog);
 	fprintf(stderr, "    Options:\n");
 	fprintf(stderr, "        -C PATH   changes directory to PATH before starting up.\n");
 	fprintf(stderr, "        -u USER   login as USER before starting up.\n");
@@ -78,6 +79,8 @@ usage(char *prog) {
 	fprintf(stderr, "        -c PATH   specify SSL certificate 'crt' file\n");
 	fprintf(stderr, "        -p PORT   specify server port\n");
 	fprintf(stderr, "        -B BYTES  maximum POST body size in bytes (default: 10485760)\n");
+	fprintf(stderr, "        -m MODS   colon-separated list of module paths to load\n");
+	fprintf(stderr, "        -A        auto-authenticate all WebSocket connections\n");
 	fprintf(stderr, "        -d        don't detach\n");
 	fprintf(stderr, "        -r        root multiplex mode\n");
 	fprintf(stderr, "        -?        display this message.\n");
@@ -87,14 +90,16 @@ int
 main(int argc, char *argv[])
 {
 	register char c;
+	char *mods = NULL;
 
 	qsys_openlog("ndc");
 
 	ndc_config.flags |= NDC_DETACH;
 
-	while ((c = getopt(argc, argv, "?dK:k:C:rp:s:B:"))
+	while ((c = getopt(argc, argv, "?AdK:k:C:rp:s:B:m:"))
 			!= -1) switch (c)
 	{
+		case 'A': ndc_config.flags |= NDC_AUTOAUTH; break;
 		case 'd': ndc_config.flags &= ~NDC_DETACH; break;
 		case 'p': ndc_config.port = atoi(optarg); break;
 		case 'C': ndc_config.chroot = optarg; break;
@@ -104,6 +109,7 @@ main(int argc, char *argv[])
 		case 's': ndc_config.ssl_port = atoi(optarg);
 			  break;
 		case 'B': ndc_config.max_body_size = (size_t)strtoull(optarg, NULL, 10); break;
+		case 'm': mods = optarg; break;
 		default:
 			  usage(*argv);
 			  return 1;
@@ -112,7 +118,7 @@ main(int argc, char *argv[])
 	optind = 1;
 
 #ifndef _WIN32
-	while ((c = getopt(argc, argv, "?dK:k:C:rp:s:B:"))
+	while ((c = getopt(argc, argv, "?AdK:k:C:rp:s:B:m:"))
 			!= -1)
 	{
 		switch (c) {
@@ -144,7 +150,16 @@ main(int argc, char *argv[])
 
 	ndx_init();
 
-	ndx_load("./mods/core/core");
+	if (mods) {
+		char *p = mods, *sep;
+		do {
+			sep = strchr(p, ':');
+			if (sep) *sep = '\0';
+			ndx_load(p);
+			if (sep) { *sep = ':'; p = sep + 1; }
+		} while (sep);
+	}
+
 	ndc_main();
 
 	// temporary
@@ -209,8 +224,12 @@ void ndc_command(socket_t fd, int argc, char *argv[])
 }
 
 int ndc_connect(socket_t fd) {
+	if (ndc_config.flags & NDC_AUTOAUTH) {
+		struct passwd *pw = getpwuid(geteuid());
+		ndc_auth(fd, pw ? pw->pw_name : "root");
+	}
 	call_on_ndc_connect(fd);
-	return 0;
+	return !!(ndc_config.flags & NDC_AUTOAUTH);
 }
 
 void ndc_disconnect(socket_t fd) {

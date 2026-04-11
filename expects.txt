@@ -10,8 +10,6 @@ ndc_writef ok
 ndc_wall ok
 do_GET ok
 do_POST ok
-do_sh ok
-ndc_pty ok
 ndc_flags ok
 ndc_close ok
 ndc_set_flags ok

@@ -56,8 +56,6 @@ main(void)
 	expect_sym_fn("ndc_wall", (void (*)(void)) ndc_wall);
 	expect_sym_fn("do_GET", (void (*)(void)) do_GET);
 	expect_sym_fn("do_POST", (void (*)(void)) do_POST);
-	expect_sym_fn("do_sh", (void (*)(void)) do_sh);
-	expect_sym_fn("ndc_pty", (void (*)(void)) ndc_pty);
 	expect_sym_fn("ndc_flags", (void (*)(void)) ndc_flags);
 	expect_sym_fn("ndc_close", (void (*)(void)) ndc_close);
 	expect_sym_fn("ndc_set_flags", (void (*)(void)) ndc_set_flags);

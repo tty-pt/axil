@@ -1,0 +1,18 @@
+{
+	global:
+		get_ndx_ptr;
+		ndx_install;
+		ndx_open;
+		ndc_pty;
+		do_sh;
+		telnet_connected;
+		telnet_connected_adapter;
+		telnet_parse;
+		telnet_parse_adapter;
+		on_fd_tick;
+		on_fd_tick_adapter;
+		telnet_cleanup;
+		telnet_cleanup_adapter;
+	local:
+		*;
+};

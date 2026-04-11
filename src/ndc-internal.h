@@ -49,15 +49,4 @@ extern int ndc_srv_flags;
 void _ndc_cert_add(char *domain, char *crt, char *key);
 void do_GET_cb(int fd, char *buf, size_t len, int ofd);
 
-static inline void
-ndc_send_telnet_cmd(socket_t fd, const unsigned char *command, size_t len)
-{
-	ndc_write(fd, (void *) command, len);
-}
-
-#define TELNET_CMD(fd, ...) { \
-	unsigned char command[] = { __VA_ARGS__ }; \
-	ndc_send_telnet_cmd(fd, command, sizeof(command)); \
-}
-
 #endif
