@@ -1727,14 +1727,6 @@ request_handle(socket_t fd, int argc, char *argv[], int req_flags)
 	else
 		param = "";
 
-	/* Normalize: Remove trailing slash
-	 * (ignore if it's just "/")
-	 */
-	size_t uri_len = strlen(document_uri);
-	if (uri_len > 1 && document_uri[uri_len - 1] == '/') {
-		document_uri[uri_len - 1] = '\0';
-	}
-
 	headers_get(fd, &body_start, argv[argc]);
 
 	/* For POST with Content-Length, ensure the full body is buffered.
