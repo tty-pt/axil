@@ -1148,8 +1148,6 @@ ndc_main(void)
 		fds_write = fds_wactive;
 		int select_n = select(FD_SETSIZE, &fds_read, &fds_write, NULL, &timeout);
 
-		descr_proc_writes();
-
 		switch (select_n) {
 		case -1:
 			switch (errno) {
@@ -1168,6 +1166,7 @@ ndc_main(void)
 			continue;
 		}
 
+		descr_proc_writes();
 		descr_proc_reads();
 	}
 
