@@ -140,6 +140,7 @@ char ndc_execbuf[BUFSIZ * 64];
 
 char *domain_default = NULL;
 unsigned cert_hd, mime_hd, hdlr_hd, ws_hd;
+static unsigned query_db;
 
 static void ndc_ws_tunnel(socket_t a, socket_t b);
 
@@ -163,14 +164,42 @@ ndc_env(socket_t fd)
 }
 
 void
-ndc_header(socket_t fd, const char *key, const char *value)
+ndc_header_set(socket_t fd, const char *key, const char *value)
 {
 	struct descr *d = &descr_map[fd];
 	size_t len = strlen(d->resp_headers);
 	snprintf(d->resp_headers + len, BUFSIZ - len, "%s: %s\r\n", key, value);
 }
 
-void
+int
+ndc_header_get(socket_t fd, const char *key, char *buf, size_t buf_len)
+{
+	char env_key[ENV_KEY_LEN];
+	size_t i;
+
+	snprintf(env_key, sizeof(env_key), "HTTP_");
+	size_t prefix_len = strlen(env_key);
+
+	for (i = 0; key[i] && prefix_len + i < sizeof(env_key) - 1; i++) {
+		char c = key[i];
+		env_key[prefix_len + i] = (c == '-') ? '_' : (char)toupper((unsigned char)c);
+	}
+	env_key[prefix_len + i] = '\0';
+
+	struct descr *d = &descr_map[fd];
+	const char *val = (const char *)qmap_get(d->env_hd, env_key);
+	if (!val)
+		return -1;
+
+	size_t len = strlen(val);
+	if (len >= buf_len)
+		len = buf_len - 1;
+	memcpy(buf, val, len);
+	buf[len] = '\0';
+	return 0;
+}
+
+static void
 ndc_head(socket_t fd, int code)
 {
 	struct descr *d = &descr_map[fd];
@@ -186,13 +215,21 @@ ndc_head(socket_t fd, int code)
 	d->resp_headers[0] = '\0';
 }
 
-void
+static void
 ndc_body(socket_t fd, const char *body)
 {
 	/* Just send body content - headers already sent by ndc_head() */
 	if (body && *body)
 		ndc_write(fd, (void *)body, strlen(body));
 	ndc_close(fd);
+}
+
+void
+ndc_respond(socket_t fd, int code, const char *body)
+{
+	ndc_head(fd, code);
+	if (body != NULL)
+		ndc_body(fd, body);
 }
 
 
@@ -1276,6 +1313,79 @@ ndc_env_get(socket_t fd, char *target, char *key)
 	return 0;
 }
 
+int
+ndc_query_parse(char *body)
+{
+	if (!query_db)
+		return -1;
+
+	qmap_drop(query_db);
+
+	if (!body || !*body)
+		return 0;
+
+	char *copy = strdup(body);
+	if (!copy)
+		return -1;
+
+	char *saveptr;
+	char *pair = strtok_r(copy, "&", &saveptr);
+
+	while (pair) {
+		char *eq = strchr(pair, '=');
+		if (eq) {
+			*eq = '\0';
+			char *key = pair;
+			char *value = eq + 1;
+			size_t vlen = strlen(value);
+			char *decoded = malloc(vlen + 1);
+			if (decoded) {
+				size_t j = 0;
+				for (size_t i = 0; value[i] && j < vlen; i++) {
+					if (value[i] == '+') {
+						decoded[j++] = ' ';
+					} else if (value[i] == '%' && value[i+1] && value[i+2]) {
+						unsigned int c;
+						sscanf(value + i + 1, "%2x", &c);
+						decoded[j++] = (char)c;
+						i += 2;
+					} else {
+						decoded[j++] = value[i];
+					}
+				}
+				decoded[j] = '\0';
+				qmap_put(query_db, key, decoded);
+				free(decoded);
+			}
+		}
+		pair = strtok_r(NULL, "&", &saveptr);
+	}
+
+	free(copy);
+	return 0;
+}
+
+int
+ndc_query_param(const char *name, char *buf, size_t buf_len)
+{
+	if (!query_db || !buf || !buf_len)
+		return -1;
+
+	buf[0] = '\0';
+
+	const char *val = (const char *)qmap_get(query_db, name);
+	if (!val)
+		return -1;
+
+	size_t len = strlen(val);
+	if (len >= buf_len)
+		len = buf_len - 1;
+
+	memcpy(buf, val, len);
+	buf[len] = '\0';
+	return (int)len;
+}
+
 static void
 _env_prep(socket_t fd, char *document_uri,
 		char *param, char *method)
@@ -1377,32 +1487,6 @@ request_handle_static(socket_t fd, char *document_uri,
 	static_write(fd, "200 OK", content_type,
 			open(filename, O_RDONLY),
 			stat_buf->st_size);
-
-	return 1;
-}
-
-static inline int
-request_handle_websocket(socket_t fd)
-{
-	struct descr *d = &descr_map[fd];
-	char buf[ENV_VALUE_LEN];
-
-	if (d->flags & DF_WEBSOCKET)
-		return 0;
-
-	if (ndc_env_get(fd, buf, "HTTP_SEC_WEBSOCKET_KEY"))
-		return 0;
-
-	struct io *dio = &io[fd];
-	if (ws_init(fd, buf))
-		return -1;
-
-	d->flags |= DF_WEBSOCKET;
-	dio->read = ws_read;
-	dio->write = ws_write;
-
-	if (!ndc_connect || ndc_connect(fd))
-		d->flags |= DF_CONNECTED;
 
 	return 1;
 }
@@ -1626,10 +1710,9 @@ buffer_post_body(socket_t fd, int argc, char *argv[], size_t body_start)
 		: NDC_DEFAULT_MAX_BODY_SIZE;
 
 	if (content_length > limit) {
-		ndc_header(fd, "Connection", "close");
+		ndc_header_set(fd, "Connection", "close");
 		ndc_set_flags(fd, DF_TO_CLOSE);
-		ndc_head(fd, 413);
-		ndc_close(fd);
+		ndc_respond(fd, 413, "");
 		return -1;
 	}
 
@@ -1810,11 +1893,8 @@ request_handle(socket_t fd, int argc, char *argv[], int req_flags)
 		return;
 	}
 
-	if (!(d->flags & DF_WEBSOCKET)) {
-		if (request_handle_websocket(fd))
-			return;
+	if (!(d->flags & DF_WEBSOCKET))
 		d->flags |= DF_TO_CLOSE;
-	}
 
 	if (request_handle_static(fd, document_uri, &stat_buf))
 		return;
@@ -1889,6 +1969,9 @@ ndc_ws_upgrade(socket_t fd)
 	dio->read = ws_read;
 	dio->write = ws_write;
 
+	if (!ndc_connect || ndc_connect(fd))
+		d->flags |= DF_CONNECTED;
+
 	return 0;
 }
 
@@ -1949,12 +2032,14 @@ void
 do_GET(socket_t fd, int argc, char *argv[])
 {
 	request_handle(fd, argc, argv, 0);
+	qmap_drop(query_db);
 }
 
 void
 do_POST(socket_t fd, int argc, char *argv[])
 {
 	request_handle(fd, argc, argv, NDC_POST);
+	qmap_drop(query_db);
 }
 
 int
@@ -2022,6 +2107,7 @@ ndc_pre_init(void)
 	unsigned hdlr_type = qmap_reg(sizeof(ndc_handler_t *));
 	unsigned ws_type = qmap_reg(sizeof(ndc_ws_upstream_t *));
 
+	query_db = qmap_open(NULL, NULL, QM_STR, QM_STR, 0xFF, 0);
 	mime_hd = qmap_open(NULL, NULL, QM_STR, QM_STR, MIME_MASK, 0);
 	cert_hd = qmap_open(NULL, NULL, QM_STR, cert_type, CERT_MASK, 0);
 	hdlr_hd = qmap_open(NULL, NULL, QM_STR, hdlr_type, HDLR_MASK, 0);

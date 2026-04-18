@@ -5,8 +5,6 @@ A cross-platform C library for building network daemons - HTTP servers, WebSocke
 
 From <a href="https://github.com/tty-pt/neverdark">NeverDark</a> • Powers [tty.pt](https://tty.pt)
 
-<img src="https://github.com/tty-pt/ndc/blob/main/usage.gif?raw=true" width="512" />
-
 ## What is ndc?
 
 **`libndc`** - C library for building network daemons  

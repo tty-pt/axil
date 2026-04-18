@@ -4,7 +4,7 @@
  * @file ndc.h
  * @brief Public API for ndc.
  *
- * ndc provides an HTTP(S) + WebSocket(S) server with a terminal mux.
+ * ndc provides an HTTP(S) + WebSocket(S) server with a modular handler system.
  * POSIX-only features (PTY, CGI, autoindex, passwd auth, mmap) are
  * no-ops on Windows.
  */
@@ -143,7 +143,10 @@ void ndc_register_handler(char *path, ndc_handler_t handler);
  */
 void ndc_ws_handler(char *path, ndc_ws_upstream_t handler);
 
-/** Upgrade connection to websocket. Reads Sec-WebSocket-Key from environment. */
+/** Upgrade connection to websocket. Reads Sec-WebSocket-Key from the request
+ *  environment, performs the handshake, and calls ndc_connect() on success.
+ *  Modules should call this explicitly from their GET handler when
+ *  HTTP_SEC_WEBSOCKET_KEY is present in the request environment. */
 int ndc_ws_upgrade(socket_t fd);
 
 /** Write data to websocket. */
@@ -165,7 +168,8 @@ extern void ndc_update(unsigned long long dt) WEAK;
 extern void ndc_vim(socket_t fd, int argc, char *argv[]) WEAK;
 /** Called on accept; return value is ignored. */
 extern int ndc_accept(socket_t fd) WEAK;
-/** Called on websocket connect; return non-zero to accept. */
+/** Called after a WebSocket upgrade completes via ndc_ws_upgrade().
+ *  Return non-zero to mark the connection as established (DF_CONNECTED). */
 extern int ndc_connect(socket_t fd) WEAK;
 /** Called on disconnect. */
 extern void ndc_disconnect(socket_t fd) WEAK;
@@ -225,6 +229,17 @@ int ndc_env_get(socket_t fd, char *target, char *key);
 /** Set environment key/value; returns 0 on success. */
 int ndc_env_put(socket_t fd, char *key, char *value);
 
+/** Parse a URL-encoded form body (application/x-www-form-urlencoded) into an
+ *  internal key/value store.  Call once per request before ndc_query_param().
+ *  Subsequent calls replace the previous parse result.  Returns 0 on success,
+ *  -1 on error. */
+int ndc_query_parse(char *body);
+
+/** Look up a key previously parsed by ndc_query_parse().  Copies the
+ *  URL-decoded value into buf (at most buf_len-1 bytes, NUL-terminated).
+ *  Returns the number of bytes written, or -1 if the key was not found. */
+int ndc_query_param(const char *name, char *buf, size_t buf_len);
+
 /** Get HTTP status text for a status code. Returns "Unknown" for invalid codes. */
 const char *ndc_status_text(int code);
 
@@ -262,14 +277,18 @@ ndc_send_telnet_cmd(socket_t fd, const unsigned char *command, size_t cmd_len)
 
 #endif /* !_WIN32 */
 
-/** Add a response header. Call before ndc_head(). */
-void ndc_header(socket_t fd, const char *key, const char *value);
+/** Add a response header. Call before ndc_respond(). */
+void ndc_header_set(socket_t fd, const char *key, const char *value);
 
-/** Send HTTP status line and all accumulated headers. Call after ndc_header(). */
-void ndc_head(socket_t fd, int code);
+/** Get an incoming request header by its natural name (e.g. "Content-Type").
+ *  Copies the value into buf (at most buf_len-1 bytes, NUL-terminated).
+ *  Returns 0 on success, -1 if the header was not present in the request. */
+int ndc_header_get(socket_t fd, const char *key, char *buf, size_t buf_len);
 
-/** Send HTTP body and close the connection. Headers must be sent first via ndc_head(). */
-void ndc_body(socket_t fd, const char *body);
+/** Send HTTP status, accumulated headers, body and close the connection.
+ *  If body is NULL, only the status line and headers are sent and the
+ *  connection is left open for streaming via ndc_write(). */
+void ndc_respond(socket_t fd, int code, const char *body);
 
 /** Serve a static file with auto-detected MIME type. Closes fd on completion. */
 void ndc_sendfile(socket_t fd, const char *path);

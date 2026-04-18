@@ -608,16 +608,14 @@ ndc_sendfile(socket_t fd, const char *path)
 {
 	int file_fd = open(path, O_RDONLY);
 	if (file_fd < 0) {
-		ndc_head(fd, 404);
-		ndc_body(fd, "404 Not Found");
+		ndc_respond(fd, 404, "404 Not Found");
 		return;
 	}
 
 	struct stat st;
 	if (fstat(file_fd, &st) < 0) {
 		close(file_fd);
-		ndc_head(fd, 500);
-		ndc_body(fd, "500 Internal Server Error");
+		ndc_respond(fd, 500, "500 Internal Server Error");
 		return;
 	}
 
@@ -630,16 +628,15 @@ ndc_sendfile(socket_t fd, const char *path)
 	close(file_fd);
 
 	if (mapped == MAP_FAILED) {
-		ndc_head(fd, 500);
-		ndc_body(fd, "500 Internal Server Error");
+		ndc_respond(fd, 500, "500 Internal Server Error");
 		return;
 	}
 
 	char len_buf[32];
 	snprintf(len_buf, sizeof(len_buf), "%ld", (long)st.st_size);
-	ndc_header(fd, "Content-Type", mime);
-	ndc_header(fd, "Content-Length", len_buf);
-	ndc_head(fd, 200);
+	ndc_header_set(fd, "Content-Type", mime);
+	ndc_header_set(fd, "Content-Length", len_buf);
+	ndc_respond(fd, 200, NULL);
 	ndc_write(fd, mapped, st.st_size);
 	munmap(mapped, st.st_size);
 
