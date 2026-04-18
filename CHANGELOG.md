@@ -1,13 +1,27 @@
-## [1.0.0] - 2026-02-23
-- Major architectural refactoring: separated platform-specific code into `ndc-posix.c` and `ndc-win.c` for better maintainability
-- Added comprehensive test suite with unit tests, authentication tests, multiplexing tests, and WebSocket protocol tests
-- Integrated libndx dependency loading system allowing plugin modules to declare dependencies via `ndx_deps[]`
-- Enhanced documentation: expanded README with usage examples, added TypeScript type definitions (`types/ndc.d.ts`), generated Doxygen documentation
-- Improved build system: added symbol export maps (`libndc.exports`, `libndc.map`), snapshot-based testing infrastructure
-- Added HTTP server-side rendering (SSR) status code support and improved CGI handling
-- Fixed multiple build issues for BSD systems and MinGW/Windows platforms
-- Added test fixtures for autoindex and CGI functionality
-- Change release strategy
-- Headers in ttypt folder
-- Autoindex feature
-- Auto trailing slash feature
+## [v1.1.0] - 2026-04-18
+
+- **Breaking:** `ndc_handler_t` return type changed from `void` to `int`.
+- **Breaking:** `on_ndc_init` NDX hook removed.
+- **Breaking:** NDX hooks `on_ndc_vim`, `on_ndc_command`, `on_ndc_connect`, `on_ndc_disconnect`: `fd` parameter type changed from `int` to `socket_t`.
+- **Breaking:** `DF_RESERVED = 64` renamed to `DF_TUNNEL = 64`.
+- **Breaking:** `ndc_header(fd, key, value)` renamed to `ndc_header_set(fd, key, value)`.
+- **Breaking:** `ndc_head(fd, code)` and `ndc_body(fd, body)` replaced by `ndc_respond(fd, code, body)`. Passing `NULL` body sends only the status line and headers, leaving the connection open for streaming.
+- **Breaking:** `do_sh` removed from exported `ndc_cb_t` symbols.
+- **Breaking:** `ndc_pty()` removed from public API.
+- **New:** `ndc_ws_upstream_t` typedef and `ndc_ws_handler()` for registering WebSocket tunnel handlers.
+- **New:** `ndc_ws_upgrade()`, `ndc_ws_write()`, `ndc_ws_read()`, `ndc_ws_close()`, `ndc_ws_printf()` — WebSocket I/O API.
+- **New:** `ndc_header_get(fd, key, buf, buf_len)` — read an incoming request header by name.
+- **New:** `ndc_query_parse(body)` / `ndc_query_param(name, buf, buf_len)` — URL-encoded form body parsing.
+- **New:** `ndc_respond(fd, code, body)` — send HTTP status, accumulated headers, and optional body.
+- **New:** `ndc_sendfile(fd, path)` — serve a static file with auto-detected MIME type.
+- **New:** `ndc_status_text(code)` — get HTTP status text for a code.
+- **New:** `ndc_config.max_body_size` field (0 = default 10 MB); configurable via `-B` CLI flag.
+- **New:** `NDC_AUTOAUTH = 32` server flag — auto-authenticate all WebSocket connections (dev/testing only).
+- **New:** `DF_EXTERN = 512`, `DF_WS_WAITING = 128`, `DF_WS_PROXY_PENDING = 256` descriptor flags.
+- **New weak hooks:** `ndc_fd_tick(fd)`, `ndc_parse(fd, input, nread)`.
+- **New NDX hooks:** `on_ndc_tick`, `on_ndc_parse`.
+- **New (POSIX-only):** `ndc_fd_watch()`, `ndc_fd_unwatch()`, `ndc_fork_child_reset()`, `ndc_get_pw()`, `ndc_send_telnet_cmd()` / `TELNET_CMD()` macro.
+- **New:** `ndc_clear_active()`.
+- **New:** `ndc_register_handler()` now supports `:param` path patterns (e.g. `/items/:id`), exposing matched segments as `PATTERN_PARAM_<NAME>` environment variables.
+- **Breaking:** Public headers moved to `ttypt/` subdirectory (e.g. `#include <ttypt/ndc.h>`).
+- **New:** Plugin modules can declare dependencies via `ndx_deps[]` for the libndx loader.

@@ -1501,7 +1501,7 @@ request_handle_redirect(socket_t fd, char *document_uri)
 			&& (ndc_srv_flags & NDC_SSL)
 			&& !d->cSSL)
 	{
-		char host[ENV_KEY_LEN];
+		char host[ENV_KEY_LEN] = { 0 };
 		ndc_env_get(fd, host, "HTTP_HOST");
 		char response[8285];
 		d->flags |= DF_TO_CLOSE;
@@ -1756,14 +1756,15 @@ request_handle_trailing_slash(socket_t fd, char *document_uri)
 
 	if (fs_path && S_ISDIR(stat_buf.st_mode)) {
 		struct descr *d = &descr_map[fd];
-		char host[ENV_KEY_LEN];
+		char host[ENV_KEY_LEN] = { 0 };
 		ndc_env_get(fd, host, "HTTP_HOST");
+		const char *scheme = d->cSSL ? "https" : "http";
 
 		ndc_writef(fd, "HTTP/1.1 301 Moved Permanently\r\n"
-				"Location: https://%s%s/\r\n"
+				"Location: %s://%s%s/\r\n"
 				"Content-Length: 0\r\n"
 				"Connection: close\r\n"
-				"\r\n", host, document_uri);
+				"\r\n", scheme, host, document_uri);
 
 		d->flags |= DF_TO_CLOSE;
 		if (!d->remaining_len)
