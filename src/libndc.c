@@ -261,7 +261,6 @@ ndc_close(socket_t fd)
 
 	tunnel_pair[fd] = INVALID_SOCKET;
 
-	memset(&io[fd], 0, sizeof(struct io));
 	memset(d, 0, sizeof(struct descr));
 	d->fd = -1;
 }
