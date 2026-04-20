@@ -9,8 +9,8 @@
 
 struct ndx_ctx ndx;
 
-NDX_DECL(const char *, get_session_user,
-    const char *, token)
+NDX_HOOK_DECL(const char *, get_session_user,
+    const char *, token);
 
 #ifdef _WIN32
 #include <winsock2.h>
@@ -21,66 +21,21 @@ typedef SOCKET socket_t;
 typedef int socket_t;
 #endif
 
-NDX_DEF(int, on_ndc_exit, int, i)
-{
-  (void) i;
-  return 0;
-}
-
-NDX_DEF(int, on_ndc_update, unsigned long long, dt)
-{
-  (void) dt;
-  return 0;
-}
-
-NDX_DEF(int, on_ndc_vim, socket_t, fd, int, argc, char **, argv)
-{
-  (void) fd;
-  (void)argc; (void)argv; return 0;
-}
-
-NDX_DEF(int, on_ndc_command, socket_t, fd, int, argc, char **, argv)
-{
-  (void) fd;
-  (void)argc; (void)argv; return 0;
-}
-
-NDX_DEF(int, on_ndc_connect, socket_t, fd)
-{
-  (void) fd;
-  return 0;
-}
-
-NDX_DEF(int, on_ndc_disconnect, socket_t, fd)
-{
-  (void) fd;
-  return 0;
-}
-
-NDX_DEF(int, on_ndc_tick, socket_t, fd)
-{
-  (void) fd;
-  int ret;
-  ndx_last(&ret);
-  return ret;
-}
-
-NDX_DEF(int, on_ndc_parse,
+NDX_HOOK_DEF(int, on_ndc_exit, int, i);
+NDX_HOOK_DEF(int, on_ndc_update, unsigned long long, dt);
+NDX_HOOK_DEF(int, on_ndc_vim, socket_t, fd, int, argc, char **, argv);
+NDX_HOOK_DEF(int, on_ndc_command, socket_t, fd, int, argc, char **, argv);
+NDX_HOOK_DEF(int, on_ndc_connect, socket_t, fd);
+NDX_HOOK_DEF(int, on_ndc_disconnect, socket_t, fd);
+NDX_HOOK_DEF(int, on_ndc_tick, socket_t, fd);
+NDX_HOOK_DEF(int, on_ndc_parse,
     socket_t, fd,
     unsigned char *, input,
-    int, nread)
-{
-  (void) fd;
-  (void) input;
-  (void) nread;
-  int ret;
-  ndx_last(&ret);
-  return ret;
-}
+    int, nread);
 
 void exit_all(int i) {
 	// close databases here
-	call_on_ndc_exit(i);
+	on_ndc_exit(i);
 
 	qsys_closelog();
 #ifndef _WIN32
@@ -216,7 +171,7 @@ char *ndc_auth_check(socket_t fd) {
 				strncpy(token, eq, sizeof(token) - 1);
 				token[sizeof(token) - 1] = '\0';
 			}
-			username = call_get_session_user(token);
+			username = get_session_user(token);
 			return username ? (char *)username : NULL;
 		}
 		p = strchr(eq, ';');
@@ -229,7 +184,7 @@ char *ndc_auth_check(socket_t fd) {
 void
 ndc_update(unsigned long long dt)
 {
-	call_on_ndc_update(dt);
+	on_ndc_update(dt);
 }
 
 void ndc_vim(socket_t fd, int argc, char *argv[])
@@ -237,12 +192,12 @@ void ndc_vim(socket_t fd, int argc, char *argv[])
 	if (!(ndc_flags(fd) & DF_AUTHENTICATED))
 		return;
 
-	call_on_ndc_vim(fd, argc, argv);
+	on_ndc_vim(fd, argc, argv);
 }
 
 void ndc_command(socket_t fd, int argc, char *argv[])
 {
-	call_on_ndc_command(fd, argc, argv);
+	on_ndc_command(fd, argc, argv);
 }
 
 int ndc_connect(socket_t fd) {
@@ -254,7 +209,7 @@ int ndc_connect(socket_t fd) {
 		ndc_auth(fd, "root");
 #endif
 	}
-	call_on_ndc_connect(fd);
+	on_ndc_connect(fd);
 	return !!(ndc_config.flags & NDC_AUTOAUTH);
 }
 
@@ -262,11 +217,11 @@ void ndc_disconnect(socket_t fd) {
 	if (!(ndc_flags(fd) & DF_AUTHENTICATED))
 		return;
 
-	call_on_ndc_disconnect(fd);
+	on_ndc_disconnect(fd);
 }
 
 void ndc_fd_tick(socket_t fd) {
-  call_on_ndc_tick(fd);
+  on_ndc_tick(fd);
 }
 
 int ndc_parse(
@@ -274,5 +229,5 @@ int ndc_parse(
     unsigned char * input,
     int nread)
 {
-  return call_on_ndc_parse(fd, input, nread);
+  return on_ndc_parse(fd, input, nread);
 }
