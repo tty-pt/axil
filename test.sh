@@ -89,6 +89,24 @@ fetch_status() {
 		nc 127.0.0.1 "$port" | sed -n '1p' | tr -d '\r'
 }
 
+fetch_headers() {
+	port=$1
+	path=$2
+	if command -v curl >/dev/null 2>&1; then
+		curl -sS -i --max-time 2 "http://127.0.0.1:$port$path" |
+			sed -n '/^\r\{0,1\}$/q;p' | tr -d '\r'
+		return $?
+	fi
+
+	if ! command -v nc >/dev/null 2>&1; then
+		echo "curl or nc required" >&2
+		return 1
+	fi
+
+	printf "GET %s HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n" "$path" |
+		nc 127.0.0.1 "$port" | sed -n '/^\r\{0,1\}$/q;p' | tr -d '\r'
+}
+
 fetch_body() {
 	port=$1
 	path=$2
@@ -207,6 +225,9 @@ if wait_for_port_tcp "$route_port"; then
 		assert_contains route-edit "edit:test-book" sh -c "curl -sS --max-time 2 'http://127.0.0.1:$route_port/sb/test-book/edit?foo=bar'"
 		assert_contains route-catchall "catchall" sh -c "curl -sS --max-time 2 http://127.0.0.1:$route_port/sb/test-book/delete"
 		assert_contains route-chords "chords:amazing_grace" sh -c "curl -sS --max-time 2 http://127.0.0.1:$route_port/chords/amazing_grace"
+		assert_contains respond-coop "Cross-Origin-Opener-Policy: same-origin" fetch_headers "$route_port" "/song/amazing_grace/"
+		assert_contains respond-coep "Cross-Origin-Embedder-Policy: require-corp" fetch_headers "$route_port" "/song/amazing_grace/"
+		assert_contains respond-corp "Cross-Origin-Resource-Policy: same-origin" fetch_headers "$route_port" "/song/amazing_grace/"
 	else
 		echo "Skipping route matcher checks: curl not found" >&2
 	fi
@@ -217,6 +238,29 @@ else
 fi
 
 kill "$route_pid" >/dev/null 2>&1 || true
+
+static_dir=$(mktemp -d)
+mkdir -p "$static_dir/public"
+printf "<!doctype html><title>static</title>\n" >"$static_dir/public/index.html"
+printf "\0asm\1\0\0\0" >"$static_dir/public/app.wasm"
+printf "public /*\n" >"$static_dir/serve.allow"
+static_port=$((port + 18))
+$ndc -p "$static_port" -C "$static_dir" >/dev/null 2>&1 &
+static_pid=$!
+
+if wait_for_port_tcp "$static_port"; then
+	assert_contains static-coop "Cross-Origin-Opener-Policy: same-origin" fetch_headers "$static_port" "/index.html"
+	assert_contains static-coep "Cross-Origin-Embedder-Policy: require-corp" fetch_headers "$static_port" "/index.html"
+	assert_contains static-corp "Cross-Origin-Resource-Policy: same-origin" fetch_headers "$static_port" "/index.html"
+	assert_contains wasm-type "Content-Type: application/wasm" fetch_headers "$static_port" "/app.wasm"
+	assert_contains wasm-coep "Cross-Origin-Embedder-Policy: require-corp" fetch_headers "$static_port" "/app.wasm"
+else
+	echo "static ndc failed to listen on $static_port" >&2
+	kill "$static_pid" >/dev/null 2>&1 || true
+	exit 1
+fi
+
+kill "$static_pid" >/dev/null 2>&1 || true
 
 cgi_dir=$(mktemp -d)
 cp tests/fixtures/cgi/index.sh "$cgi_dir/index.sh"

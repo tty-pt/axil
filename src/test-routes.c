@@ -9,13 +9,13 @@
 static int
 route_respond(socket_t fd, const char *body)
 {
-	ndc_writef(fd, "HTTP/1.1 200 OK\r\n"
-			"Content-Type: text/plain\r\n"
-			"Content-Length: %zu\r\n"
-			"Connection: close\r\n"
-			"\r\n"
-			"%s",
-			strlen(body), body);
+	char len_buf[32];
+
+	snprintf(len_buf, sizeof(len_buf), "%zu", strlen(body));
+	ndc_header_set(fd, "Content-Type", "text/plain");
+	ndc_header_set(fd, "Content-Length", len_buf);
+	ndc_header_set(fd, "Connection", "close");
+	ndc_respond(fd, 200, body);
 	return 0;
 }
 

@@ -119,11 +119,17 @@ void ndc_update(unsigned long long dt) {
 
 | Function | Description | Return Value |
 |----------|-------------|--------------|
-| `ndc_header(fd, key, val)` | Add response header (call before ndc_head) | - |
-| `ndc_head(fd, code)` | Send HTTP status and headers | - |
-| `ndc_body(fd, body)` | Send body and close connection | - |
+| `ndc_header_set(fd, key, val)` | Add response header (call before ndc_respond) | - |
+| `ndc_respond(fd, code, body)` | Send HTTP status, accumulated headers, optional body, and close when a body is provided | - |
 | `ndc_sendfile(fd, path)` | Serve static file with auto MIME type | - |
 | `ndc_status_text(code)` | Get HTTP status text for code | Status string |
+
+`ndc_respond()`, `ndc_sendfile()`, built-in static files, and autoindex responses
+include cross-origin isolation headers by default:
+`Cross-Origin-Opener-Policy: same-origin`,
+`Cross-Origin-Embedder-Policy: require-corp`, and
+`Cross-Origin-Resource-Policy: same-origin`. Static `.wasm` files are served as
+`application/wasm`.
 
 ### Descriptor Functions
 

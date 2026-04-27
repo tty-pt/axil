@@ -118,6 +118,10 @@ static unsigned char *input;
 static size_t input_size = FIRST_INPUT_SIZE, input_len = 0;
 
 #define NDC_DEFAULT_MAX_BODY_SIZE (10UL * 1024UL * 1024UL)
+#define NDC_CROSS_ORIGIN_HEADERS \
+		"Cross-Origin-Opener-Policy: same-origin\r\n" \
+		"Cross-Origin-Embedder-Policy: require-corp\r\n" \
+		"Cross-Origin-Resource-Policy: same-origin\r\n"
 
 static char cgi_index[] = "./index.sh";
 struct timeval select_timeout, exec_timeout;
@@ -143,6 +147,62 @@ unsigned cert_hd, mime_hd, hdlr_hd, ws_hd;
 static unsigned query_db;
 
 static void ndc_ws_tunnel(socket_t a, socket_t b);
+
+static int
+header_name_eq(const char *line, size_t line_len, const char *name)
+{
+	size_t name_len = strlen(name);
+
+	if (line_len != name_len)
+		return 0;
+
+	for (size_t i = 0; i < name_len; i++)
+		if (tolower((unsigned char)line[i]) !=
+				tolower((unsigned char)name[i]))
+			return 0;
+
+	return 1;
+}
+
+static int
+ndc_header_has(socket_t fd, const char *key)
+{
+	struct descr *d = &descr_map[fd];
+	const char *line = d->resp_headers;
+
+	while (*line) {
+		const char *colon = strchr(line, ':');
+		const char *end = strstr(line, "\r\n");
+
+		if (!end)
+			end = line + strlen(line);
+		if (colon && colon < end &&
+				header_name_eq(line, (size_t)(colon - line), key))
+			return 1;
+
+		line = *end ? end + 2 : end;
+	}
+
+	return 0;
+}
+
+static void
+ndc_header_set_default(socket_t fd, const char *key, const char *value)
+{
+	if (!ndc_header_has(fd, key))
+		ndc_header_set(fd, key, value);
+}
+
+static void
+ndc_default_response_headers(socket_t fd)
+{
+	ndc_header_set_default(fd, "Cross-Origin-Opener-Policy",
+			"same-origin");
+	ndc_header_set_default(fd, "Cross-Origin-Embedder-Policy",
+			"require-corp");
+	ndc_header_set_default(fd, "Cross-Origin-Resource-Policy",
+			"same-origin");
+}
 
 void
 ndc_env_clear(socket_t fd)
@@ -205,6 +265,7 @@ ndc_head(socket_t fd, int code)
 	struct descr *d = &descr_map[fd];
 	/* Send status line */
 	ndc_writef(fd, "HTTP/1.1 %d %s\r\n", code, ndc_status_text(code));
+	ndc_default_response_headers(fd);
 	/* Send accumulated headers */
 	if (*d->resp_headers) {
 		ndc_writef(fd, "%s", d->resp_headers);
@@ -1428,6 +1489,7 @@ static_write(socket_t fd, char *status, const char *content_type,
 			"Content-Length: %lu\r\n"
 			"Content-Type: %s\r\n"
 			"Cache-Control: max-age=5184000\r\n"
+			NDC_CROSS_ORIGIN_HEADERS
 			"\r\n",
 			status, date, total, content_type);
 
@@ -1578,6 +1640,7 @@ request_handle_autoindex(socket_t fd, const char *uri_path, const char *fs_path)
 			"Content-Length: %lu\r\n"
 			"Content-Type: text/html\r\n"
 			"Connection: close\r\n"
+			NDC_CROSS_ORIGIN_HEADERS
 			"\r\n",
 			date, body_len);
 	ndc_write(fd, body, body_len);
