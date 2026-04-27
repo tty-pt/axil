@@ -1135,6 +1135,7 @@ ndc_init(void)
 	mime_put("txt", "text/plain");
 	mime_put("css", "text/css");
 	mime_put("js", "application/javascript");
+	mime_put("wasm", "application/wasm");
 
 	setup_signals();
 
