@@ -3,6 +3,7 @@
 testbin=./bin/test
 ndc=./bin/ndc
 testauth=./bin/test-auth
+testroutes=./bin/test-routes
 
 case "$(uname -s)" in
 	Darwin)
@@ -196,6 +197,27 @@ fi
 
 kill "$auth_pid" >/dev/null 2>&1 || true
 
+route_port=$((port + 15))
+$testroutes -p "$route_port" >/dev/null 2>&1 &
+route_pid=$!
+
+if wait_for_port_tcp "$route_port"; then
+	if command -v curl >/dev/null 2>&1; then
+		assert_contains route-song "amazing_grace" sh -c "curl -sS --max-time 2 http://127.0.0.1:$route_port/song/amazing_grace/"
+		assert_contains route-edit "edit:test-book" sh -c "curl -sS --max-time 2 'http://127.0.0.1:$route_port/sb/test-book/edit?foo=bar'"
+		assert_contains route-catchall "catchall" sh -c "curl -sS --max-time 2 http://127.0.0.1:$route_port/sb/test-book/delete"
+		assert_contains route-chords "chords:amazing_grace" sh -c "curl -sS --max-time 2 http://127.0.0.1:$route_port/chords/amazing_grace"
+	else
+		echo "Skipping route matcher checks: curl not found" >&2
+	fi
+else
+	echo "test-routes failed to listen on $route_port" >&2
+	kill "$route_pid" >/dev/null 2>&1 || true
+	exit 1
+fi
+
+kill "$route_pid" >/dev/null 2>&1 || true
+
 cgi_dir=$(mktemp -d)
 cp tests/fixtures/cgi/index.sh "$cgi_dir/index.sh"
 chmod +x "$cgi_dir/index.sh"
@@ -270,4 +292,3 @@ if command -v openssl >/dev/null 2>&1 && command -v curl >/dev/null 2>&1; then
 else
 	echo "Skipping TLS tests: openssl or curl not found" >&2
 fi
-

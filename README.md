@@ -108,7 +108,7 @@ void ndc_update(unsigned long long dt) {
 |----------|-------------|--------------|
 | `ndc_main()` | Start event loop (blocking) | Exit code |
 | `ndc_register(name, cb, flags)` | Register command handler | - |
-| `ndc_register_handler(path, handler)` | Register HTTP handler for exact path | - |
+| `ndc_register_handler(path, handler)` | Register HTTP handler for exact path or pattern | - |
 | `ndc_write(fd, data, len)` | Write raw bytes | Bytes written or -1 |
 | `ndc_writef(fd, fmt, ...)` | Write formatted data | Bytes written or -1 |
 | `ndc_dwritef(fd, fmt, va)` | Write formatted data with va_list | Bytes written or -1 |

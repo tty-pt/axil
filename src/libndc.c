@@ -1587,80 +1587,192 @@ request_handle_autoindex(socket_t fd, const char *uri_path, const char *fs_path)
 		ndc_close(fd);
 }
 
-/* Match a URL pattern against a path
- * Pattern: "/chords/:id" matches "/chords/test-transpose" (exact segment count)
- * Pattern: "/items/:type/:id" matches "/items/song/test"
- * Pattern must have same number of segments as path (no prefix matching)
- * Sets env var PATTERN_PARAM_ID="test-transpose", etc.
- * Returns 1 on match, 0 on no match
+typedef struct {
+	char env_key[256];
+	char value[256];
+} ndc_pattern_param_t;
+
+typedef struct {
+	int matched;
+	int literal_chars;
+	int param_count;
+	int wildcard_count;
+	int param_used;
+	ndc_pattern_param_t params[16];
+} ndc_pattern_match_t;
+
+static int
+pattern_is_end(const char *s)
+{
+	return *s == '\0' || *s == '?';
+}
+
+static int
+pattern_is_terminal_wildcard(const char *start, const char *end)
+{
+	if ((end - start) != 1 || start[0] != '*')
+		return 0;
+
+	if (*end == '\0' || *end == '?')
+		return 1;
+
+	if (*end != '/')
+		return 0;
+
+	end++;
+	return pattern_is_end(end);
+}
+
+static void
+pattern_commit_params(socket_t fd, const ndc_pattern_match_t *match)
+{
+	int i;
+
+	for (i = 0; i < match->param_used; i++)
+		ndc_env_put(fd,
+			(char *)match->params[i].env_key,
+			(char *)match->params[i].value);
+}
+
+static int
+pattern_better_match(const ndc_pattern_match_t *candidate,
+	const ndc_pattern_match_t *best)
+{
+	if (!best->matched)
+		return 1;
+
+	if (candidate->wildcard_count != best->wildcard_count)
+		return candidate->wildcard_count < best->wildcard_count;
+
+	if (candidate->literal_chars != best->literal_chars)
+		return candidate->literal_chars > best->literal_chars;
+
+	if (candidate->param_count != best->param_count)
+		return candidate->param_count < best->param_count;
+
+	return 0;
+}
+
+/* Match a URL pattern against a path.
+ * Supports:
+ *   - :param single-segment captures
+ *   - terminal * catch-alls (e.g. "/sb/" followed by "*")
+ *   - optional trailing slash on either the pattern or the path
  */
 static int
-pattern_match(const char *pattern, const char *path, socket_t fd)
+pattern_match(const char *pattern, const char *path, ndc_pattern_match_t *out)
 {
 	const char *p = pattern;
 	const char *u = path;
+	const char *p_path = strchr(pattern, '/');
+	const char *u_path = strchr(path, '/');
+	ndc_pattern_match_t match;
 
-	while (*p && *u) {
-		if (*p == ':') {
-			/* Found parameter - extract param name */
+	memset(&match, 0, sizeof(match));
+
+	if (!p_path)
+		p_path = pattern + strlen(pattern);
+	if (!u_path)
+		u_path = path + strlen(path);
+
+	if (p_path != pattern) {
+		size_t p_prefix_len = (size_t)(p_path - pattern);
+		size_t u_prefix_len = (size_t)(u_path - path);
+
+		if (p_prefix_len != u_prefix_len ||
+		    memcmp(pattern, path, p_prefix_len) != 0)
+			return 0;
+
+		match.literal_chars += (int)p_prefix_len;
+		p = p_path;
+		u = u_path;
+	} else {
+		u = u_path;
+	}
+
+	while (1) {
+		const char *p_end;
+		const char *u_end;
+		size_t p_seg_len;
+		size_t u_seg_len;
+
+		while (*p == '/' && pattern_is_end(p + 1))
 			p++;
-			const char *param_start = p;
-			while (*p && *p != '/' && *p != '?')
-				p++;
+		while (*u == '/' && pattern_is_end(u + 1))
+			u++;
 
-			size_t param_name_len = p - param_start;
-			char param_name[128];
-			if (param_name_len >= sizeof(param_name))
-				return 0;
+		if (pattern_is_end(p) && pattern_is_end(u)) {
+			*out = match;
+			out->matched = 1;
+			return 1;
+		}
 
-			memcpy(param_name, param_start, param_name_len);
-			param_name[param_name_len] = '\0';
-
-			/* Extract param value from URL */
-			const char *value_start = u;
-			while (*u && *u != '/' && *u != '?')
-				u++;
-
-			size_t value_len = u - value_start;
-			
-			/* Empty parameter value is not allowed */
-			if (value_len == 0)
-				return 0;
-
-			char value[256];
-			if (value_len >= sizeof(value))
-				return 0;
-
-			memcpy(value, value_start, value_len);
-			value[value_len] = '\0';
-
-			/* Set environment variable PATTERN_PARAM_<NAME>=<value> */
-			char env_key[256];
-			snprintf(env_key, sizeof(env_key), "PATTERN_PARAM_%s", param_name);
-
-			/* Convert param name to uppercase */
-			for (char *c = env_key + 14; *c; c++)  /* Skip "PATTERN_PARAM_" */
-				*c = toupper((unsigned char)*c);
-
-			ndc_env_put(fd, env_key, value);
-
-			/* Continue matching after parameter */
+		if (*p == '/' && *u == '/') {
+			p++;
+			u++;
 			continue;
 		}
 
-		if (*p != *u)
+		if (*p == '/' || *u == '/')
 			return 0;
 
-		p++;
-		u++;
+		if (pattern_is_end(p) || pattern_is_end(u))
+			return 0;
+
+		p_end = p;
+		while (*p_end && *p_end != '/' && *p_end != '?')
+			p_end++;
+		u_end = u;
+		while (*u_end && *u_end != '/' && *u_end != '?')
+			u_end++;
+
+		p_seg_len = (size_t)(p_end - p);
+		u_seg_len = (size_t)(u_end - u);
+
+		if (pattern_is_terminal_wildcard(p, p_end)) {
+			match.wildcard_count++;
+			*out = match;
+			out->matched = 1;
+			return 1;
+		}
+
+		if (p_seg_len > 1 && p[0] == ':') {
+			char env_key[256];
+			size_t key_pos;
+			size_t i;
+
+			if (u_seg_len == 0 || match.param_used >= (int)(sizeof(match.params) / sizeof(match.params[0])))
+				return 0;
+
+			key_pos = (size_t)snprintf(env_key, sizeof(env_key), "PATTERN_PARAM_");
+			if (key_pos >= sizeof(env_key))
+				return 0;
+
+			for (i = 1; i < p_seg_len && key_pos + 1 < sizeof(env_key); i++)
+				env_key[key_pos++] = (char)toupper((unsigned char)p[i]);
+			if (i != p_seg_len || key_pos >= sizeof(env_key))
+				return 0;
+			env_key[key_pos] = '\0';
+
+			if (u_seg_len >= sizeof(match.params[match.param_used].value))
+				return 0;
+
+			snprintf(match.params[match.param_used].env_key,
+				sizeof(match.params[match.param_used].env_key),
+				"%s", env_key);
+			memcpy(match.params[match.param_used].value, u, u_seg_len);
+			match.params[match.param_used].value[u_seg_len] = '\0';
+			match.param_used++;
+			match.param_count++;
+		} else {
+			if (p_seg_len != u_seg_len || memcmp(p, u, p_seg_len) != 0)
+				return 0;
+			match.literal_chars += (int)p_seg_len;
+		}
+
+		p = p_end;
+		u = u_end;
 	}
-
-	/* Both must be at end (or query string) - exact match required */
-	/* Pattern and path must end at same point (no trailing segments allowed) */
-	if (*p == '\0' && (*u == '\0' || *u == '?'))
-		return 1;
-
-	return 0;
 }
 
 /* Pattern matching for registered handlers
@@ -1674,25 +1786,39 @@ ndc_match_pattern(const char *path_with_method, const char *document_uri, socket
 	uint32_t cur = qmap_iter(hdlr_hd, NULL, 0);
 	const void *pattern_key;
 	const void *handler_ptr;
+	ndc_handler_t *best_handler = NULL;
+	ndc_pattern_match_t best_match;
+
+	memset(&best_match, 0, sizeof(best_match));
 
 	while (qmap_next(&pattern_key, &handler_ptr, cur)) {
 		const char *pattern = (const char *)pattern_key;
+		ndc_pattern_match_t candidate;
+		int matched = 0;
 
-		/* Skip non-patterns (no : character) */
-		if (!strchr(pattern, ':'))
+		/* Skip non-patterns (no special path syntax) */
+		if (!strchr(pattern, ':') && !strchr(pattern, '*'))
 			continue;
 
-		/* Try to match pattern against both path_with_method and document_uri */
-		if (pattern_match(pattern, path_with_method, fd) ||
-		    pattern_match(pattern, document_uri, fd)) {
-			ndc_handler_t *hdlr;
-			memcpy(&hdlr, handler_ptr, sizeof(hdlr));
-			qmap_fin(cur); /* Close iterator */
-			return hdlr;
+		memset(&candidate, 0, sizeof(candidate));
+		if (pattern_match(pattern, path_with_method, &candidate))
+			matched = 1;
+		else if (pattern_match(pattern, document_uri, &candidate))
+			matched = 1;
+
+		if (matched && pattern_better_match(&candidate, &best_match)) {
+			memcpy(&best_handler, handler_ptr, sizeof(best_handler));
+			best_match = candidate;
 		}
 	}
 
-	return NULL;
+	qmap_fin(cur);
+
+	if (!best_handler)
+		return NULL;
+
+	pattern_commit_params(fd, &best_match);
+	return best_handler;
 }
 
 /* Ensures the full POST body is present in the global `input` buffer.

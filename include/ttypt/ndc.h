@@ -129,7 +129,9 @@ void ndc_register(char *name, ndc_cb_t *cb, int flags);
 /** Run the main server loop (blocks). */
 int ndc_main(void);
 /** Register an HTTP handler for a path (exact match or pattern).
- *  Patterns support :param syntax (e.g., "/items/:id" or "/a/:type/:id").
+ *  Patterns support :param syntax (e.g., "/items/:id" or "/a/:type/:id"),
+ *  terminal catch-alls via * (e.g., "/items/" followed by "*"), and optional trailing slash
+ *  matching on path patterns.
  *  Matched parameters are available via PATTERN_PARAM_<NAME> env vars.
  *  Example: "/items/:id" matches "/items/123", sets PATTERN_PARAM_ID="123"
  */

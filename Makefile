@@ -1,4 +1,4 @@
-all := libndc ndc test test-auth
+all := libndc ndc test test-auth test-routes
 INSTALL_BIN := ndc
 
 LDLIBS-libndc-Linux := -lrt
@@ -9,6 +9,7 @@ LDLIBS-libndc-Windows := -lws2_32
 LDLIBS-ndc := -lndc -lndx -lqsys
 LDLIBS-test := -lndc
 LDLIBS-test-auth := -lndc -lqsys
+LDLIBS-test-routes := -lndc
 
 CFLAGS := -g
 CFLAGS-Windows := -masm=intel

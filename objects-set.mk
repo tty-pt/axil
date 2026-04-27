@@ -4,3 +4,4 @@ CFLAGS-ndc-posix-o := -fPIC
 CFLAGS-ndc-o :=
 CFLAGS-test-o :=
 CFLAGS-test-auth-o :=
+CFLAGS-test-routes-o :=
