@@ -16,6 +16,7 @@
 #include <pwd.h>
 #include <sys/ioctl.h>
 #include <termios.h>
+int ndc_write_remaining(socket_t fd);
 #endif
 
 struct descr {
@@ -48,4 +49,5 @@ extern int do_cleanup;
 extern int ndc_srv_flags;
 void _ndc_cert_add(char *domain, char *crt, char *key);
 
+int ndc_write_remaining(socket_t fd);
 #endif

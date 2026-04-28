@@ -149,6 +149,7 @@ static ndc_handler_t *fallback_handlers[FALLBACK_MAX];
 static size_t fallback_handlers_len;
 
 static void ndc_ws_tunnel(socket_t a, socket_t b);
+int ndc_write_remaining(socket_t fd);
 
 static int
 header_name_eq(const char *line, size_t line_len, const char *name)
@@ -281,12 +282,15 @@ ndc_head(socket_t fd, int code)
 static void
 ndc_body(socket_t fd, const char *body)
 {
-	/* Just send body content - headers already sent by ndc_head() */
-	if (body && *body)
-		ndc_write(fd, (void *)body, strlen(body));
-	ndc_close(fd);
+        struct descr *d = &descr_map[fd];
+        if (body && *body)
+                ndc_write(fd, (void *)body, strlen(body));
+        d->flags |= DF_TO_CLOSE;
+        if (!d->remaining_len)
+                ndc_close(fd);
+        else
+                ndc_write_remaining(fd);
 }
-
 void
 ndc_respond(socket_t fd, int code, const char *body)
 {
@@ -489,7 +493,7 @@ ndc_ssl_lower_write(socket_t fd, void *from, io_size_t len, int flags UNUSED)
 	return SSL_write(d->cSSL, from, len);
 }
 
-static int
+int
 ndc_write_remaining(socket_t fd)
 {
 	struct descr *d = &descr_map[fd];

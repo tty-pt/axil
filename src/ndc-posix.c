@@ -613,10 +613,14 @@ ndc_sendfile(socket_t fd, const char *path)
 	ndc_header_set(fd, "Content-Type", mime);
 	ndc_header_set(fd, "Content-Length", len_buf);
 	ndc_respond(fd, 200, NULL);
-	ndc_write(fd, mapped, st.st_size);
-	munmap(mapped, st.st_size);
-
-	ndc_close(fd);
+        ndc_write(fd, mapped, st.st_size);
+        munmap(mapped, st.st_size);
+        struct descr *d = &descr_map[fd];
+        d->flags |= DF_TO_CLOSE;
+        if (!d->remaining_len)
+                ndc_close(fd);
+        else
+                ndc_write_remaining(fd);
 }
 
 const struct ndc_platform_ops *ndc_platform = &ndc_posix_ops;
