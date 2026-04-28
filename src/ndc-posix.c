@@ -59,7 +59,6 @@ static char *autoindex_mmap;
 static size_t autoindex_len = 0;
 
 static struct passwd ndc_pw;
-static char cgi_index[] = "./index.sh";
 
 #define ENV_CAP 0xFF
 
@@ -294,28 +293,6 @@ ndc_platform_autoindex_allowed(const char *uri, struct stat *stat_buf)
 
 	// Not in the autoindex list
 	return NULL;
-}
-
-static void
-ndc_platform_request_handle_cgi(socket_t fd, struct stat *stat_buf, char *body)
-{
-	if (stat(cgi_index, stat_buf) || access(cgi_index, X_OK)) {
-		const char *body = "404 Not Found\n";
-		ndc_writef(fd, "HTTP/1.1 404 Not Found\r\n"
-				"Content-Type: text/plain\r\n"
-				"Content-Length: %zu\r\n"
-				"\r\n"
-				"%s",
-				strlen(body), body);
-		return;
-	}
-
-	char * args[2] = { cgi_index, NULL };
-	ndc_writef(fd, "HTTP/1.1 ");
-
-	ndc_exec(fd, args, do_GET_cb, body, strlen(body));
-
-	ndc_exec_loop(fd);
 }
 
 int
@@ -597,7 +574,6 @@ static const struct ndc_platform_ops ndc_posix_ops = {
 	.env_prep = ndc_platform_env_prep,
 	.static_allowed = ndc_platform_static_allowed,
 	.autoindex_allowed = ndc_platform_autoindex_allowed,
-	.request_handle_cgi = ndc_platform_request_handle_cgi,
 	.exec_loop = ndc_exec_loop,
 };
 

@@ -19,7 +19,6 @@ struct ndc_platform_ops {
 	void (*env_prep)(socket_t fd);
 	char *(*static_allowed)(const char *path, struct stat *stat_buf);
 	char *(*autoindex_allowed)(const char *uri, struct stat *stat_buf);
-	void (*request_handle_cgi)(socket_t fd, struct stat *stat_buf, char *body);
 	int (*exec_loop)(socket_t fd);
 };
 

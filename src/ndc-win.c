@@ -185,14 +185,6 @@ ndc_platform_autoindex_allowed(const char *uri, struct stat *stat_buf)
 	return NULL;
 }
 
-static void
-ndc_platform_request_handle_cgi(socket_t fd, struct stat *stat_buf, char *body)
-{
-	(void)fd;
-	(void)stat_buf;
-	(void)body;
-}
-
 static int
 ndc_platform_exec_loop(socket_t fd)
 {
@@ -212,7 +204,6 @@ static const struct ndc_platform_ops ndc_win_ops = {
 	.env_prep = ndc_platform_env_prep,
 	.static_allowed = ndc_platform_static_allowed,
 	.autoindex_allowed = ndc_platform_autoindex_allowed,
-	.request_handle_cgi = ndc_platform_request_handle_cgi,
 	.exec_loop = ndc_platform_exec_loop,
 };
 

@@ -47,6 +47,5 @@ extern struct timeval exec_timeout;
 extern int do_cleanup;
 extern int ndc_srv_flags;
 void _ndc_cert_add(char *domain, char *crt, char *key);
-void do_GET_cb(int fd, char *buf, size_t len, int ofd);
 
 #endif

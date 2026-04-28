@@ -17,7 +17,7 @@ Build telnet-like servers, custom protocol handlers, HTTP APIs, WebSocket apps, 
 | Platform | Status |
 |----------|--------|
 | Linux, macOS, BSD | ✅ Full support |
-| Windows | ⚠️ HTTP/WS only (no PTY/CGI/privilege dropping) |
+| Windows | ⚠️ HTTP/WS only (no PTY/privilege dropping) |
 
 ## Quick Start
 
@@ -151,7 +151,6 @@ include cross-origin isolation headers by default:
 
 | Function | Description | Return Value |
 |----------|-------------|--------------|
-| `ndc_pty(fd, args[])` | Spawn PTY-backed command | - |
 | `ndc_exec(fd, args[], cb, input, len)` | Execute command with callback | - |
 | `ndc_auth(fd, username)` | Mark user as authenticated, drop privileges (POSIX) | 0 on success, 1 on failure |
 | `ndc_cert_add(str)` | Add cert mapping: `domain:cert.pem:key.pem` | - |
@@ -273,55 +272,42 @@ Access with `ndc_flags()` and `ndc_set_flags()`:
 |---------|-------|---------|
 | HTTP/WebSocket | ✅ | ✅ |
 | Custom commands | ✅ | ✅ |
-| PTY/Terminal | ✅ | ❌ |
-| CGI execution | ✅ | ❌ |
+| PTY/Terminal | External module | ❌ |
+| CGI execution | External module | External module |
 | Authentication (privilege dropping) | ✅ | ❌ |
 | SSL certs | ✅ | ❌ |
 
 Windows build provides core networking only.
 
-## CGI & Static Files (POSIX)
-
-Create `index.sh` for dynamic pages:
-
-```sh
-#!/bin/sh
-# CGI scripts output status line without "HTTP/1.1" prefix
-printf "200 OK\r\n"
-printf "Content-Type: text/plain\r\n"
-printf "\r\n"
-printf "Hello world\n"
-printf "REQUEST_METHOD=%s\n" "$REQUEST_METHOD"
-printf "QUERY_STRING=%s\n" "$QUERY_STRING"
-```
+## Static Files (POSIX)
 
 Control access with `serve.allow` and `serve.autoindex` files.
 
+CGI is provided by the separate `ndc-cgi` module.
+
 ## Modules
 
-For browser terminal / WebSocket PTY multiplexer support, see [libndc-mux](mods/mux/).
+`ndc` loads dynamic modules with `-m`:
 
----
+```sh
+ndc -d -p 8888 -m /path/to/libndc-tty.so
+ndc -d -p 8888 -m /path/to/libndc-cgi.so
+```
+
+Multiple modules can be loaded with a colon-separated list.
+
+Sibling modules:
+
+- `../ndc-tty`: browser terminal / WebSocket PTY support (provides `ndc_pty()`).
+- `../ndc-cgi`: CGI fallback support for executable `./index.sh`.
+
+Modules can register HTTP handlers, fallback handlers, commands, and `libndx`
+hooks such as `on_ndc_update`, `on_ndc_connect`, `on_ndc_disconnect`, and
+`on_ndc_parse`.
 
 - Man pages: `man ndc` and `man ndc.3`
 - Full API: `include/ttypt/ndc.h`
 - Examples: `src/test.c`, `src/test-auth.c`
-
-## Plugin System
-
-Load dynamic modules with dependency resolution via `libndx`:
-
-```c
-// In your plugin module
-const char *ndx_deps[] = { "dependency.so", NULL };
-
-// In main application
-ndx_load("plugin.so");  // Automatically loads dependencies
-```
-
-The binary automatically loads `core.so` at startup. Plugins can hook into lifecycle events (`ndc_update`, `ndc_connect`, etc.) to extend functionality.
-
----
 
 **Installation**: See [install docs](https://github.com/tty-pt/ci/blob/main/docs/install.md)  
 **Entry points**: `src/ndc.c` (native)

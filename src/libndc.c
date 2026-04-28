@@ -79,6 +79,7 @@
 #define MIME_MASK 0x3F
 #define CMD_MASK 0x7F
 #define HDLR_MASK 0x3F
+#define FALLBACK_MAX 16
 #define ENV_MASK 0xFF
 
 #define CMD_ARGM 8
@@ -123,7 +124,6 @@ static size_t input_size = FIRST_INPUT_SIZE, input_len = 0;
 		"Cross-Origin-Embedder-Policy: require-corp\r\n" \
 		"Cross-Origin-Resource-Policy: same-origin\r\n"
 
-static char cgi_index[] = "./index.sh";
 struct timeval select_timeout, exec_timeout;
 
 struct io io[FD_SETSIZE];
@@ -145,6 +145,8 @@ char ndc_execbuf[BUFSIZ * 64];
 char *domain_default = NULL;
 unsigned cert_hd, mime_hd, hdlr_hd, ws_hd;
 static unsigned query_db;
+static ndc_handler_t *fallback_handlers[FALLBACK_MAX];
+static size_t fallback_handlers_len;
 
 static void ndc_ws_tunnel(socket_t a, socket_t b);
 
@@ -1316,16 +1318,6 @@ headers_get(socket_t fd, size_t *body_start, char *next_lines)
 	*body_start = s - next_lines;	
 }
 
-
-void
-do_GET_cb(int fd, char *buf, size_t len, int ofd)
-{
-	if (ofd == 1)
-		ndc_write(fd, buf, len);
-	else
-		ERR("%s\n", buf);
-}
-
 static void
 url_decode(char *str)
 {
@@ -1468,7 +1460,6 @@ _env_prep(socket_t fd, char *document_uri,
 		geteuid()
 #endif
 		? ndc_config.chroot : "");
-	ndc_env_put(fd, "SCRIPT_NAME", cgi_index + 1);
 	if (ndc_platform && ndc_platform->env_prep)
 		ndc_platform->env_prep(fd);
 }
@@ -2124,14 +2115,28 @@ request_handle(socket_t fd, int argc, char *argv[], int req_flags)
 		return;
 	}
 
-	if (ndc_platform && ndc_platform->request_handle_cgi)
-		ndc_platform->request_handle_cgi(fd, &stat_buf, body);
+	for (size_t i = 0; i < fallback_handlers_len; i++) {
+		if (fallback_handlers[i](fd, body))
+			return;
+	}
+
+	ndc_respond(fd, 404, "404 Not Found\n");
 }
 
 void
 ndc_register_handler(char *path, ndc_handler_t handler)
 {
 	qmap_put(hdlr_hd, path, &handler);
+}
+
+int
+ndc_register_fallback_handler(ndc_handler_t handler)
+{
+	if (fallback_handlers_len >= FALLBACK_MAX)
+		return -1;
+
+	fallback_handlers[fallback_handlers_len++] = handler;
+	return 0;
 }
 
 void

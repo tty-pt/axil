@@ -5,7 +5,7 @@
  * @brief Public API for ndc.
  *
  * ndc provides an HTTP(S) + WebSocket(S) server with a modular handler system.
- * POSIX-only features (PTY, CGI, autoindex, passwd auth, mmap) are
+ * POSIX-only features (PTY, autoindex, passwd auth, mmap) are
  * no-ops on Windows.
  */
 
@@ -136,6 +136,14 @@ int ndc_main(void);
  *  Example: "/items/:id" matches "/items/123", sets PATTERN_PARAM_ID="123"
  */
 void ndc_register_handler(char *path, ndc_handler_t handler);
+
+/** Register a fallback HTTP handler.
+ *  Fallback handlers run after static files, registered handlers, and
+ *  ndc_config.default_handler have declined the request. Return non-zero
+ *  when the request was handled. Returns 0 on success, -1 when the fallback
+ *  table is full.
+ */
+int ndc_register_fallback_handler(ndc_handler_t handler);
 
 /** Register a websocket handler for a path.
  *  When a websocket request arrives for this path, the handler is called
@@ -301,6 +309,9 @@ void ndc_sendfile(socket_t fd, const char *path);
 void ndc_exec(socket_t cfd, char * const args[],
 		cmd_cb_t callback, void *input,
 		size_t input_len);
+
+/** Continue processing a command started with ndc_exec() (POSIX-only). */
+int ndc_exec_loop(socket_t cfd);
 
 void ndc_clear_active(socket_t cfd);
 

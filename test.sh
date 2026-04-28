@@ -262,32 +262,6 @@ fi
 
 kill "$static_pid" >/dev/null 2>&1 || true
 
-cgi_dir=$(mktemp -d)
-cp tests/fixtures/cgi/index.sh "$cgi_dir/index.sh"
-chmod +x "$cgi_dir/index.sh"
-cgi_port=$((port + 20))
-$ndc -p "$cgi_port" -C "$cgi_dir" >/dev/null 2>&1 &
-cgi_pid=$!
-
-if wait_for_port_tcp "$cgi_port"; then
-	if command -v nc >/dev/null 2>&1; then
-		resp=$(raw_request "$cgi_port" "GET /?foo=bar HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n")
-		head=$(echo "$resp" | sed -n '1p' | tr -d '\r')
-		body=$(echo "$resp" | sed -n '/^\r\{0,1\}$/,$p' | sed '1d' | tr -d '\r')
-		echo "$head" | grep -F "HTTP/1.1 200" >/dev/null 2>&1 || { echo "CGI status missing" >&2; exit 1; }
-		echo "$body" | grep -F "Hello CGI" >/dev/null 2>&1 || { echo "CGI response missing" >&2; exit 1; }
-		echo "$body" | grep -F "QUERY_STRING=foo=bar" >/dev/null 2>&1 || { echo "CGI QUERY_STRING missing" >&2; exit 1; }
-	else
-		echo "Skipping CGI tests: nc not found" >&2
-	fi
-else
-	echo "cgi ndc failed to listen on $cgi_port" >&2
-	kill "$cgi_pid" >/dev/null 2>&1 || true
-	exit 1
-fi
-
-kill "$cgi_pid" >/dev/null 2>&1 || true
-
 ai_dir=$(mktemp -d)
 cp tests/fixtures/autoindex/serve.allow "$ai_dir/serve.allow"
 cp tests/fixtures/autoindex/serve.autoindex "$ai_dir/serve.autoindex"
