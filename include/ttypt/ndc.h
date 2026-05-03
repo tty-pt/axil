@@ -300,6 +300,25 @@ int ndc_header_get(socket_t fd, const char *key, char *buf, size_t buf_len);
  *  connection is left open for streaming via ndc_write(). */
 void ndc_respond(socket_t fd, int code, const char *body);
 
+/** Send a plain-text response and close the connection.
+ *  Returns 0 on 2xx status codes, 1 otherwise. */
+static inline int
+ndc_respond_plain(socket_t fd, int status, const char *msg)
+{
+	ndc_header_set(fd, "Content-Type", "text/plain");
+	ndc_respond(fd, status, msg ? msg : "");
+	return status / 100 != 2;
+}
+
+/** Send a 303 redirect and close the connection. Returns 0. */
+static inline int
+ndc_redirect(socket_t fd, const char *location)
+{
+	ndc_header_set(fd, "Location", (char *)location);
+	ndc_respond(fd, 303, "");
+	return 0;
+}
+
 /** Serve a static file with auto-detected MIME type. Closes fd on completion. */
 void ndc_sendfile(socket_t fd, const char *path);
 
