@@ -1470,7 +1470,7 @@ _env_prep(socket_t fd, char *document_uri,
 
 static void
 static_write(socket_t fd, char *status, const char *content_type,
-		int want_fd, off_t total)
+		int want_fd, off_t total, const char *etag)
 {
 	struct descr *d = &descr_map[fd];
 	time_t now = time(NULL);
@@ -1478,15 +1478,21 @@ static_write(socket_t fd, char *status, const char *content_type,
 	char date[100];
 
 	strftime(date, sizeof(date), "%a, %d %b %Y %H:%M:%S GMT", tm_info);
+
+	char etag_hdr[80] = "";
+	if (etag && *etag)
+		snprintf(etag_hdr, sizeof(etag_hdr), "ETag: %s\r\n", etag);
+
 	ndc_writef(fd, "HTTP/1.1 %s\r\n"
 			"Date: %s\r\n"
 			"Server: ndc/0.0.1 (Unix)\r\n"
 			"Content-Length: %lu\r\n"
 			"Content-Type: %s\r\n"
 			"Cache-Control: max-age=5184000\r\n"
+			"%s"
 			NDC_CROSS_ORIGIN_HEADERS
 			"\r\n",
-			status, date, total, content_type);
+			status, date, total, content_type, etag_hdr);
 
 
 	if (want_fd <= 0) {
@@ -1542,9 +1548,28 @@ request_handle_static(socket_t fd, char *document_uri,
 			content_type = skey;
 	}
 
+	char etag[64];
+	snprintf(etag, sizeof(etag), "\"%lx-%lx\"",
+			(unsigned long)stat_buf->st_mtime,
+			(unsigned long)stat_buf->st_size);
+
+	char inm[64] = { 0 };
+	if (ndc_header_get(fd, "If-None-Match", inm, sizeof(inm)) == 0
+			&& strcmp(inm, etag) == 0) {
+		struct descr *d = &descr_map[fd];
+		d->flags |= DF_TO_CLOSE;
+		ndc_writef(fd, "HTTP/1.1 304 Not Modified\r\n"
+				"ETag: %s\r\n"
+				"Cache-Control: max-age=5184000\r\n"
+				"\r\n", etag);
+		if (!d->remaining_len)
+			ndc_close(fd);
+		return 1;
+	}
+
 	static_write(fd, "200 OK", content_type,
 			open(filename, O_RDONLY),
-			stat_buf->st_size);
+			stat_buf->st_size, etag);
 
 	return 1;
 }
@@ -1596,7 +1621,7 @@ request_handle_autoindex(socket_t fd, const char *uri_path, const char *fs_path)
 
 	dir = opendir(fs_path);
 	if (!dir) {
-		static_write(fd, "500 Internal Server Error", "text/plain", -1, 27);
+		static_write(fd, "500 Internal Server Error", "text/plain", -1, 27, "");
 		return;
 	}
 
@@ -1659,28 +1684,6 @@ typedef struct {
 	ndc_pattern_param_t params[16];
 } ndc_pattern_match_t;
 
-static int
-pattern_is_end(const char *s)
-{
-	return *s == '\0' || *s == '?';
-}
-
-static int
-pattern_is_terminal_wildcard(const char *start, const char *end)
-{
-	if ((end - start) != 1 || start[0] != '*')
-		return 0;
-
-	if (*end == '\0' || *end == '?')
-		return 1;
-
-	if (*end != '/')
-		return 0;
-
-	end++;
-	return pattern_is_end(end);
-}
-
 static void
 pattern_commit_params(socket_t fd, const ndc_pattern_match_t *match)
 {
@@ -1718,118 +1721,105 @@ pattern_better_match(const ndc_pattern_match_t *candidate,
  *   - optional trailing slash on either the pattern or the path
  */
 static int
-pattern_match(const char *pattern, const char *path, ndc_pattern_match_t *out)
+pattern_match(
+	const char *pat,
+	const char *path,
+	ndc_pattern_match_t *m)
 {
-	const char *p = pattern;
-	const char *u = path;
-	const char *p_path = strchr(pattern, '/');
-	const char *u_path = strchr(path, '/');
-	ndc_pattern_match_t match;
+	memset(m, 0, sizeof(*m));
 
-	memset(&match, 0, sizeof(match));
+	for (;;) {
+		/* skip redundant trailing slashes */
+		while (*pat == '/' && (pat[1] == '/' || !pat[1] || pat[1] == '?'))
+			pat++;
 
-	if (!p_path)
-		p_path = pattern + strlen(pattern);
-	if (!u_path)
-		u_path = path + strlen(path);
+		while (*path == '/' && (path[1] == '/' || !path[1] || path[1] == '?'))
+			path++;
 
-	if (p_path != pattern) {
-		size_t p_prefix_len = (size_t)(p_path - pattern);
-		size_t u_prefix_len = (size_t)(u_path - path);
-
-		if (p_prefix_len != u_prefix_len ||
-		    memcmp(pattern, path, p_prefix_len) != 0)
-			return 0;
-
-		match.literal_chars += (int)p_prefix_len;
-		p = p_path;
-		u = u_path;
-	} else {
-		u = u_path;
-	}
-
-	while (1) {
-		const char *p_end;
-		const char *u_end;
-		size_t p_seg_len;
-		size_t u_seg_len;
-
-		while (*p == '/' && pattern_is_end(p + 1))
-			p++;
-		while (*u == '/' && pattern_is_end(u + 1))
-			u++;
-
-		if (pattern_is_end(p) && pattern_is_end(u)) {
-			*out = match;
-			out->matched = 1;
+		/* both done */
+		if ((!*pat || *pat == '?') &&
+		    (!*path || *path == '?')) {
+			m->matched = 1;
 			return 1;
 		}
 
-		if (*p == '/' && *u == '/') {
-			p++;
-			u++;
+		/* one ended early */
+		if (!*pat || !*path ||
+		    *pat == '?' || *path == '?')
+			return 0;
+
+		/* wildcard */
+		if (*pat == '*' &&
+		    (!pat[1] || pat[1] == '?' ||
+		     (pat[1] == '/' &&
+		      (!pat[2] || pat[2] == '?')))) {
+			m->wildcard_count++;
+			m->matched = 1;
+			return 1;
+		}
+
+		/* consume slash */
+		if (*pat == '/' || *path == '/') {
+			if (*pat != *path)
+				return 0;
+			pat++;
+			path++;
 			continue;
 		}
 
-		if (*p == '/' || *u == '/')
-			return 0;
+		const char *ps = pat;
+		const char *us = path;
 
-		if (pattern_is_end(p) || pattern_is_end(u))
-			return 0;
+		while (*pat && *pat != '/' && *pat != '?')
+			pat++;
 
-		p_end = p;
-		while (*p_end && *p_end != '/' && *p_end != '?')
-			p_end++;
-		u_end = u;
-		while (*u_end && *u_end != '/' && *u_end != '?')
-			u_end++;
+		while (*path && *path != '/' && *path != '?')
+			path++;
 
-		p_seg_len = (size_t)(p_end - p);
-		u_seg_len = (size_t)(u_end - u);
+		size_t plen = pat - ps;
+		size_t ulen = path - us;
 
-		if (pattern_is_terminal_wildcard(p, p_end)) {
-			match.wildcard_count++;
-			*out = match;
-			out->matched = 1;
-			return 1;
+		/* parameter */
+		if (*ps == ':') {
+			if (!ulen)
+				return 0;
+
+			if (m->param_used >=
+			    (int)(sizeof(m->params) /
+			    sizeof(m->params[0])))
+				return 0;
+
+			ndc_pattern_param_t *pp =
+				&m->params[m->param_used++];
+
+			size_t k = snprintf(pp->env_key,
+				sizeof(pp->env_key),
+				"PATTERN_PARAM_");
+
+			for (size_t i = 1;
+			     i < plen &&
+			     k + 1 < sizeof(pp->env_key);
+			     i++)
+				pp->env_key[k++] =
+					toupper((unsigned char)ps[i]);
+
+			pp->env_key[k] = 0;
+
+			if (ulen >= sizeof(pp->value))
+				return 0;
+
+			memcpy(pp->value, us, ulen);
+			pp->value[ulen] = 0;
+
+			m->param_count++;
+			continue;
 		}
 
-		if (p_seg_len > 1 && p[0] == ':') {
-			char env_key[256];
-			size_t key_pos;
-			size_t i;
+		/* literal */
+		if (plen != ulen || memcmp(ps, us, plen))
+			return 0;
 
-			if (u_seg_len == 0 || match.param_used >= (int)(sizeof(match.params) / sizeof(match.params[0])))
-				return 0;
-
-			key_pos = (size_t)snprintf(env_key, sizeof(env_key), "PATTERN_PARAM_");
-			if (key_pos >= sizeof(env_key))
-				return 0;
-
-			for (i = 1; i < p_seg_len && key_pos + 1 < sizeof(env_key); i++)
-				env_key[key_pos++] = (char)toupper((unsigned char)p[i]);
-			if (i != p_seg_len || key_pos >= sizeof(env_key))
-				return 0;
-			env_key[key_pos] = '\0';
-
-			if (u_seg_len >= sizeof(match.params[match.param_used].value))
-				return 0;
-
-			snprintf(match.params[match.param_used].env_key,
-				sizeof(match.params[match.param_used].env_key),
-				"%s", env_key);
-			memcpy(match.params[match.param_used].value, u, u_seg_len);
-			match.params[match.param_used].value[u_seg_len] = '\0';
-			match.param_used++;
-			match.param_count++;
-		} else {
-			if (p_seg_len != u_seg_len || memcmp(p, u, p_seg_len) != 0)
-				return 0;
-			match.literal_chars += (int)p_seg_len;
-		}
-
-		p = p_end;
-		u = u_end;
+		m->literal_chars += plen;
 	}
 }
 

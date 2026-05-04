@@ -253,6 +253,27 @@ int ndc_query_param(const char *name, char *buf, size_t buf_len);
 /** Get HTTP status text for a status code. Returns "Unknown" for invalid codes. */
 const char *ndc_status_text(int code);
 
+/** URL-encode a string. Writes percent-encoded output to out (NUL-terminated).
+ *  Returns number of bytes written (excluding NUL), or -1 on overflow. */
+int ndc_url_encode(const char *in, char *out, size_t outlen);
+
+/** URL-decode a percent-encoded substring. Handles %XX and +.
+ *  Returns number of bytes written (excluding NUL). */
+size_t ndc_url_decode(const char *src, size_t src_len,
+                      char *out, size_t out_len);
+
+/** JSON-escape a string. Escapes ", \, \n, \r, \t and control characters.
+ *  Returns 0 on success. */
+int ndc_json_escape(const char *in, char *out, size_t outlen);
+
+/** Convert a title string to a URL/filesystem-safe slug.
+ *  Transliterates Unicode to ASCII, lowercases, replaces spaces
+ *  with underscores, strips non-alphanumeric characters.
+ *  Falls back to "item" if the result would be empty.
+ *  Returns 0 on success. */
+int ndc_slugify(const char *title, size_t title_len,
+                char *result, size_t result_len);
+
 #ifndef _WIN32
 #include <pwd.h>
 

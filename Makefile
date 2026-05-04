@@ -20,7 +20,7 @@ libndc-obj-y-OpenBSD := src/ndc-posix.o
 libndc-obj-y-Msys := src/ndc-win.o
 libndc-obj-y-MingW := src/ndc-win.o
 libndc-obj-y-MinGW64 := src/ndc-win.o
-libndc-obj-y := src/ndc-status.o
+libndc-obj-y := src/ndc-status.o src/ndc-encode.o
 
 -include ../mk/include.mk
 
