@@ -1,4 +1,4 @@
-Usage: ./bin/ndc [-Adr?] [-C PATH] [-u USER] [-k PATH] [-c PATH] [-p PORT] [-B BYTES] [-m MODS]
+Usage: ./bin/axil [-Adr?] [-C PATH] [-u USER] [-k PATH] [-c PATH] [-p PORT] [-B BYTES] [-m MODS]
     Options:
         -C PATH   changes directory to PATH before starting up.
         -u USER   login as USER before starting up.

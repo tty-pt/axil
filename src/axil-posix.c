@@ -3,7 +3,7 @@
 #define _DEFAULT_SOURCE 1
 #define _GNU_SOURCE 1
 
-#include "ndc-internal.h"
+#include "axil-internal.h"
 
 #include <arpa/inet.h>
 #include <arpa/telnet.h>
@@ -58,14 +58,14 @@ static size_t statics_len = 0;
 static char *autoindex_mmap;
 static size_t autoindex_len = 0;
 
-static struct passwd ndc_pw;
+static struct passwd axil_pw;
 
 #define ENV_CAP 0xFF
 
-int ndc_exec_loop(int cfd);
+int axil_exec_loop(int cfd);
 
 static char **
-ndc_env_prep(socket_t fd)
+axil_env_prep(socket_t fd)
 {
 	struct descr *d = &descr_map[fd];
 	char **env = malloc(ENV_CAP * sizeof(char *));
@@ -88,7 +88,7 @@ ndc_env_prep(socket_t fd)
 }
 
 static void
-ndc_pw_free(struct passwd *target)
+axil_pw_free(struct passwd *target)
 {
 	free(target->pw_name);
 	free(target->pw_shell);
@@ -96,7 +96,7 @@ ndc_pw_free(struct passwd *target)
 }
 
 static void
-ndc_pw_copy(struct passwd *target, struct passwd *origin)
+axil_pw_copy(struct passwd *target, struct passwd *origin)
 {
 	*target = *origin;
 	target->pw_name = strdup(origin->pw_name);
@@ -106,7 +106,7 @@ ndc_pw_copy(struct passwd *target, struct passwd *origin)
 }
 
 ssize_t
-ndc_mmap(char **mapped, char *file)
+axil_mmap(char **mapped, char *file)
 {
 	int fd = open(file, O_RDONLY);
 
@@ -135,7 +135,7 @@ ndc_mmap(char **mapped, char *file)
 }
 
 char *
-ndc_mmap_iter(char *start, size_t *pos_r)
+axil_mmap_iter(char *start, size_t *pos_r)
 {
 	char *line = start + *pos_r;
 	char *line_end = strchr(line, '\n');
@@ -146,66 +146,66 @@ ndc_mmap_iter(char *start, size_t *pos_r)
 }
 
 static void
-ndc_platform_init_pre_bind(void)
+axil_platform_init_pre_bind(void)
 {
 	char euname[BUFSIZ] = "root";
 	int euid = 0;
 
 	strncpy(euname, getpwuid(geteuid())->pw_name, sizeof(euname));
-	ndc_pw_copy(&ndc_pw, getpwnam(euname));
+	axil_pw_copy(&axil_pw, getpwnam(euname));
 
 	euid = geteuid();
-	if (euid && !ndc_config.chroot)
-		ndc_config.chroot = ".";
-	if (!ndc_config.chroot) {
+	if (euid && !axil_config.chroot)
+		axil_config.chroot = ".";
+	if (!axil_config.chroot) {
 		WARN("Running from cwd\n");
 	} else if (!geteuid()) {
-		CBUG(chroot(ndc_config.chroot), "chroot\n");
+		CBUG(chroot(axil_config.chroot), "chroot\n");
 		CBUG(chdir("/"), "chdir\n");
 	} else
-		CBUG(chdir(ndc_config.chroot),
-				"ndc_main chdir2\n");
+		CBUG(chdir(axil_config.chroot),
+				"axil_main chdir2\n");
 
 	signal(SIGPIPE, SIG_IGN);
 	signal(SIGHUP, SIG_IGN);
-	statics_len = ndc_mmap(&statics_mmap, "./serve.allow");
-	autoindex_len = ndc_mmap(&autoindex_mmap, "./serve.autoindex");
+	statics_len = axil_mmap(&statics_mmap, "./serve.allow");
+	autoindex_len = axil_mmap(&autoindex_mmap, "./serve.autoindex");
 }
 
 static void
-ndc_platform_init_post_bind(void)
+axil_platform_init_post_bind(void)
 {
-	if ((ndc_srv_flags & NDC_DETACH) && daemon(1, 1) != 0)
+	if ((axil_srv_flags & AXIL_DETACH) && daemon(1, 1) != 0)
 		exit(EXIT_SUCCESS);
 }
 
 static void
-ndc_platform_cleanup_descr(struct descr *d)
+axil_platform_cleanup_descr(struct descr *d)
 {
 	if (d->flags & DF_AUTHENTICATED)
-		ndc_pw_free(&d->pw);
+		axil_pw_free(&d->pw);
 }
 
 static void
-ndc_platform_auth_try(socket_t fd)
+axil_platform_auth_try(socket_t fd)
 {
-	if (!ndc_auth_check)
+	if (!axil_auth_check)
 		return;
-	char *user = ndc_auth_check(fd);
+	char *user = axil_auth_check(fd);
 	if (user)
-		ndc_auth(fd, user);
+		axil_auth(fd, user);
 }
 
 static void
-ndc_platform_env_prep(socket_t fd)
+axil_platform_env_prep(socket_t fd)
 {
 	struct descr *d = &descr_map[fd];
-	ndc_env_put(fd, "DOCUMENT_ROOT", geteuid() ? ndc_config.chroot : "");
-	ndc_env_put(fd, "HOME", d->pw.pw_dir);
+	axil_env_put(fd, "DOCUMENT_ROOT", geteuid() ? axil_config.chroot : "");
+	axil_env_put(fd, "HOME", d->pw.pw_dir);
 }
 
 static char *
-ndc_platform_static_allowed(const char *path, struct stat *stat_buf)
+axil_platform_static_allowed(const char *path, struct stat *stat_buf)
 {
 	static char output[BUFSIZ];
 	char *rstart = statics_mmap, *start, *out = NULL;
@@ -214,7 +214,7 @@ ndc_platform_static_allowed(const char *path, struct stat *stat_buf)
 		return NULL;
 
 	do {
-		start = ndc_mmap_iter(rstart, &pos);
+		start = axil_mmap_iter(rstart, &pos);
 		char *glob = strchr(start, ' ');
 		if (!glob)
 			break;
@@ -242,7 +242,7 @@ ndc_platform_static_allowed(const char *path, struct stat *stat_buf)
 }
 
 static char *
-ndc_platform_autoindex_allowed(const char *uri, struct stat *stat_buf)
+axil_platform_autoindex_allowed(const char *uri, struct stat *stat_buf)
 {
 	static char fs_path[BUFSIZ];
 	char *rstart, *start, *out = NULL;
@@ -255,7 +255,7 @@ ndc_platform_autoindex_allowed(const char *uri, struct stat *stat_buf)
 		return NULL;
 
 	do {
-		start = ndc_mmap_iter(rstart, &pos);
+		start = axil_mmap_iter(rstart, &pos);
 		char *glob = strchr(start, ' ');
 		if (!glob)
 			break;
@@ -284,7 +284,7 @@ ndc_platform_autoindex_allowed(const char *uri, struct stat *stat_buf)
 		return NULL;
 
 	do {
-		start = ndc_mmap_iter(rstart, &pos);
+		start = axil_mmap_iter(rstart, &pos);
 		if (fnmatch(start, uri, 0) == 0) {
 			// Success! Return the real filesystem path.
 			return out;
@@ -296,17 +296,17 @@ ndc_platform_autoindex_allowed(const char *uri, struct stat *stat_buf)
 }
 
 int
-ndc_auth(socket_t fd, char *username)
+axil_auth(socket_t fd, char *username)
 {
 	struct descr *d = &descr_map[fd];
-	/* syserr(LOG_ERR, "ndc_auth %d %s", fd, username); */
+	/* syserr(LOG_ERR, "axil_auth %d %s", fd, username); */
 	strncpy(d->username, username, sizeof(d->username));
 	d->flags |= DF_AUTHENTICATED;
-	ndc_env_put(fd, "REMOTE_USER", d->username);
+	axil_env_put(fd, "REMOTE_USER", d->username);
 	struct passwd *pw = getpwnam(d->username);
 	if (!pw)
 		return 1;
-	ndc_pw_copy(&d->pw, pw);
+	axil_pw_copy(&d->pw, pw);
 	return 0;
 }
 
@@ -317,9 +317,9 @@ drop_priviledges(socket_t fd)
 	int euid = geteuid();
 
 	struct passwd *pw = (d->flags & DF_AUTHENTICATED)
-		? &d->pw : &ndc_pw;
+		? &d->pw : &axil_pw;
 
-	if (!ndc_config.chroot) {
+	if (!axil_config.chroot) {
 		WARN("NOT_CHROOTED - running with %s\n", pw->pw_name);
 		return pw;
 	}
@@ -362,7 +362,7 @@ popen2(socket_t cfd, char * const args[])
 		dup2(pipe_stderr[1], 2);
 		setpgid(0, 0);
 
-		char * const *env = ndc_env_prep(cfd);
+		char * const *env = axil_env_prep(cfd);
 		execve(args[0], args, env);
 		CBUG(1, "execve\n");
 	}
@@ -380,20 +380,20 @@ static inline
 ssize_t cb_proc(socket_t fd, int pfd,
 		cmd_cb_t callback)
 {
-	char ndc_execbuf[BUFSIZ * 64];
+	char axil_execbuf[BUFSIZ * 64];
 
 	struct descr *d = &descr_map[fd];
-	memset(ndc_execbuf, 0, sizeof(ndc_execbuf));
+	memset(axil_execbuf, 0, sizeof(axil_execbuf));
 	ssize_t len;
 	int ofd;
 
-	*ndc_execbuf = '\0';
+	*axil_execbuf = '\0';
 
 	ofd = pfd == d->pipes[1];
-	len = read(pfd, ndc_execbuf, sizeof(ndc_execbuf) - 1);
+	len = read(pfd, axil_execbuf, sizeof(axil_execbuf) - 1);
 	if (len > 0) {
-		ndc_execbuf[len] = '\0';
-		callback(fd, ndc_execbuf, len, ofd);
+		axil_execbuf[len] = '\0';
+		callback(fd, axil_execbuf, len, ofd);
 	} else if (len < 0) {
 		if (errno != EAGAIN)
 			ERR("read\n");
@@ -405,7 +405,7 @@ ssize_t cb_proc(socket_t fd, int pfd,
 }
 
 int
-ndc_exec_loop(int cfd)
+axil_exec_loop(int cfd)
 {
 	struct descr *d = &descr_map[cfd];
 	fd_set read_fds;
@@ -426,7 +426,7 @@ ndc_exec_loop(int cfd)
 		dt = time(NULL) - d->sor;
 
 		if (dt >= total_timeout) {
-			ndc_writef(cfd, "504 Gateway Timeout\r\n"
+			axil_writef(cfd, "504 Gateway Timeout\r\n"
 					"Content-Type: text/plain\r\n"
 					"Content-Length: 26\r\n"
 					"\r\n"
@@ -481,14 +481,14 @@ ndc_exec_loop(int cfd)
 	} while (d->pipes_mask);
 
 	if (d->total == 0) {
-		char ndc_execbuf[BUFSIZ * 64];
-		read(d->pipes[2], ndc_execbuf, sizeof(ndc_execbuf) - 1);
-		ERR("%s\n", ndc_execbuf);
-		ndc_writef(cfd, "500 Internal Server Error\r\n"
+		char axil_execbuf[BUFSIZ * 64];
+		read(d->pipes[2], axil_execbuf, sizeof(axil_execbuf) - 1);
+		ERR("%s\n", axil_execbuf);
+		axil_writef(cfd, "500 Internal Server Error\r\n"
 				"Content-Type: text/plain\r\n"
 				"Content-Length: %ld\r\n"
 				"\r\n"
-				"Code 500: Internal Server Error:\n%s\n", strlen(ndc_execbuf) + 37, ndc_execbuf);
+				"Code 500: Internal Server Error:\n%s\n", strlen(axil_execbuf) + 37, axil_execbuf);
 		ret = -1;
 	} else {
 		len = cb_proc(cfd, d->pipes[2], d->callback);
@@ -504,13 +504,13 @@ ndc_exec_loop(int cfd)
 
 	d->flags |= DF_TO_CLOSE;
 	if (!d->remaining_len)
-		ndc_close(cfd);
+		axil_close(cfd);
 
 	return ret;
 }
 
 void
-ndc_exec(int cfd, char * const args[],
+axil_exec(int cfd, char * const args[],
 		cmd_cb_t callback, void *input,
 		size_t input_len)
 {
@@ -536,7 +536,7 @@ ndc_exec(int cfd, char * const args[],
 }
 
 void
-ndc_cert_add(char *optarg)
+axil_cert_add(char *optarg)
 {
 	char *domain = optarg, *crt, *ioc;
 	ioc = strchr(optarg, ':');
@@ -546,52 +546,52 @@ ndc_cert_add(char *optarg)
 	ioc = strchr(crt, ':');
 	CBUG(!ioc, "Invalid cert info\n");
 	*ioc = '\0';
-	_ndc_cert_add(domain, crt, ioc + 1);
-	ndc_srv_flags |= NDC_SSL;
+	_axil_cert_add(domain, crt, ioc + 1);
+	axil_srv_flags |= AXIL_SSL;
 }
 
 void
-ndc_certs_add(char *certs_file)
+axil_certs_add(char *certs_file)
 {
 	char *mapped;
-	size_t file_size = ndc_mmap(&mapped, certs_file);
+	size_t file_size = axil_mmap(&mapped, certs_file);
 	size_t pos = 0;
 
 	do
-		ndc_cert_add(ndc_mmap_iter(mapped, &pos));
+		axil_cert_add(axil_mmap_iter(mapped, &pos));
 	while (pos < file_size);
 }
 
-static const struct ndc_platform_ops ndc_posix_ops = {
-	.init_pre_bind = ndc_platform_init_pre_bind,
-	.init_post_bind = ndc_platform_init_post_bind,
-	.cleanup_descr = ndc_platform_cleanup_descr,
+static const struct axil_platform_ops axil_posix_ops = {
+	.init_pre_bind = axil_platform_init_pre_bind,
+	.init_post_bind = axil_platform_init_post_bind,
+	.cleanup_descr = axil_platform_cleanup_descr,
 	.pty_open = NULL,
 	.pty_read = NULL,
 	.handle_naws = NULL,
 	.pty_write_input = NULL,
-	.auth_try = ndc_platform_auth_try,
-	.env_prep = ndc_platform_env_prep,
-	.static_allowed = ndc_platform_static_allowed,
-	.autoindex_allowed = ndc_platform_autoindex_allowed,
-	.exec_loop = ndc_exec_loop,
+	.auth_try = axil_platform_auth_try,
+	.env_prep = axil_platform_env_prep,
+	.static_allowed = axil_platform_static_allowed,
+	.autoindex_allowed = axil_platform_autoindex_allowed,
+	.exec_loop = axil_exec_loop,
 };
 
 extern unsigned mime_hd;
 
 void
-ndc_sendfile(socket_t fd, const char *path)
+axil_sendfile(socket_t fd, const char *path)
 {
 	int file_fd = open(path, O_RDONLY);
 	if (file_fd < 0) {
-		ndc_respond(fd, 404, "404 Not Found");
+		axil_respond(fd, 404, "404 Not Found");
 		return;
 	}
 
 	struct stat st;
 	if (fstat(file_fd, &st) < 0) {
 		close(file_fd);
-		ndc_respond(fd, 500, "500 Internal Server Error");
+		axil_respond(fd, 500, "500 Internal Server Error");
 		return;
 	}
 
@@ -604,23 +604,23 @@ ndc_sendfile(socket_t fd, const char *path)
 	close(file_fd);
 
 	if (mapped == MAP_FAILED) {
-		ndc_respond(fd, 500, "500 Internal Server Error");
+		axil_respond(fd, 500, "500 Internal Server Error");
 		return;
 	}
 
 	char len_buf[32];
 	snprintf(len_buf, sizeof(len_buf), "%ld", (long)st.st_size);
-	ndc_header_set(fd, "Content-Type", mime);
-	ndc_header_set(fd, "Content-Length", len_buf);
-	ndc_respond(fd, 200, NULL);
-        ndc_write(fd, mapped, st.st_size);
+	axil_header_set(fd, "Content-Type", mime);
+	axil_header_set(fd, "Content-Length", len_buf);
+	axil_respond(fd, 200, NULL);
+        axil_write(fd, mapped, st.st_size);
         munmap(mapped, st.st_size);
         struct descr *d = &descr_map[fd];
         d->flags |= DF_TO_CLOSE;
         if (!d->remaining_len)
-                ndc_close(fd);
+                axil_close(fd);
         else
-                ndc_write_remaining(fd);
+                axil_write_remaining(fd);
 }
 
-const struct ndc_platform_ops *ndc_platform = &ndc_posix_ops;
+const struct axil_platform_ops *axil_platform = &axil_posix_ops;

@@ -3,8 +3,8 @@ exec_prefix=${prefix}
 libdir=${exec_prefix}/lib
 includedir=${prefix}/include
 
-Name: ndclib
+Name: axil
 Description: Terminal multiplexing server library
 Version: 1.0.0
-Libs: -L${libdir} -lc -ldb -lcrypto -lrt -lssl -lndc
-Cflags: -I${includedir}/ndclib
+Libs: -L${libdir} -lc -ldb -lcrypto -lrt -lssl -laxil
+Cflags: -I${includedir}

@@ -1,7 +1,7 @@
-#ifndef NDC_INTERNAL_H
-#define NDC_INTERNAL_H
+#ifndef AXIL_INTERNAL_H
+#define AXIL_INTERNAL_H
 
-#include "ndc-platform.h"
+#include "axil-platform.h"
 #include "../include/iio.h"
 
 #include <openssl/ssl.h>
@@ -16,7 +16,7 @@
 #include <pwd.h>
 #include <sys/ioctl.h>
 #include <termios.h>
-int ndc_write_remaining(socket_t fd);
+int axil_write_remaining(socket_t fd);
 #endif
 
 struct descr {
@@ -46,8 +46,8 @@ extern socket_t tunnel_pair[FD_SETSIZE];
 extern fd_set fds_read, fds_active, fds_write, fds_wactive;
 extern struct timeval exec_timeout;
 extern int do_cleanup;
-extern int ndc_srv_flags;
-void _ndc_cert_add(char *domain, char *crt, char *key);
+extern int axil_srv_flags;
+void _axil_cert_add(char *domain, char *crt, char *key);
 
-int ndc_write_remaining(socket_t fd);
+int axil_write_remaining(socket_t fd);
 #endif

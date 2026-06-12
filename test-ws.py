@@ -166,7 +166,7 @@ def main():
 	if use_pty:
 		send_frame(sock, "sh\n", opcode=0x2)
 		time.sleep(0.2)
-		send_frame(sock, "echo NDC_TEST\n", opcode=0x2)
+		send_frame(sock, "echo AXIL_TEST\n", opcode=0x2)
 		deadline = time.time() + 3.0
 		seen = False
 		buf = b""
@@ -181,7 +181,7 @@ def main():
 			if opcode == 0x8:
 				break
 			buf += payload
-			if b"NDC_TEST" in buf:
+			if b"AXIL_TEST" in buf:
 				seen = True
 				break
 		if not seen:

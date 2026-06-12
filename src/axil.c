@@ -1,4 +1,4 @@
-#include "./../include/ttypt/ndc.h"
+#include "./../include/ttypt/axil.h"
 
 #include <unistd.h>
 #include <signal.h>
@@ -21,21 +21,21 @@ typedef SOCKET socket_t;
 typedef int socket_t;
 #endif
 
-NDX_HOOK_DEF(int, on_ndc_exit, int, i);
-NDX_HOOK_DEF(int, on_ndc_update, unsigned long long, dt);
-NDX_HOOK_DEF(int, on_ndc_vim, socket_t, fd, int, argc, char **, argv);
-NDX_HOOK_DEF(int, on_ndc_command, socket_t, fd, int, argc, char **, argv);
-NDX_HOOK_DEF(int, on_ndc_connect, socket_t, fd);
-NDX_HOOK_DEF(int, on_ndc_disconnect, socket_t, fd);
-NDX_HOOK_DEF(int, on_ndc_tick, socket_t, fd);
-NDX_HOOK_DEF(int, on_ndc_parse,
+NDX_HOOK_DEF(int, on_axil_exit, int, i);
+NDX_HOOK_DEF(int, on_axil_update, unsigned long long, dt);
+NDX_HOOK_DEF(int, on_axil_vim, socket_t, fd, int, argc, char **, argv);
+NDX_HOOK_DEF(int, on_axil_command, socket_t, fd, int, argc, char **, argv);
+NDX_HOOK_DEF(int, on_axil_connect, socket_t, fd);
+NDX_HOOK_DEF(int, on_axil_disconnect, socket_t, fd);
+NDX_HOOK_DEF(int, on_axil_tick, socket_t, fd);
+NDX_HOOK_DEF(int, on_axil_parse,
     socket_t, fd,
     unsigned char *, input,
     int, nread);
 
 void exit_all(int i) {
 	// close databases here
-	on_ndc_exit(i);
+	on_axil_exit(i);
 
 	qsys_closelog();
 #ifndef _WIN32
@@ -69,23 +69,23 @@ main(int argc, char *argv[])
 	register char c;
 	char *mods = NULL;
 
-	qsys_openlog("ndc");
+	qsys_openlog("axil");
 
-	ndc_config.flags |= NDC_DETACH;
+	axil_config.flags |= AXIL_DETACH;
 
 	while ((c = getopt(argc, argv, "?AdK:k:C:rp:s:B:m:"))
 			!= -1) switch (c)
 	{
-		case 'A': ndc_config.flags |= NDC_AUTOAUTH; break;
-		case 'd': ndc_config.flags &= ~NDC_DETACH; break;
-		case 'p': ndc_config.port = atoi(optarg); break;
-		case 'C': ndc_config.chroot = optarg; break;
+		case 'A': axil_config.flags |= AXIL_AUTOAUTH; break;
+		case 'd': axil_config.flags &= ~AXIL_DETACH; break;
+		case 'p': axil_config.port = atoi(optarg); break;
+		case 'C': axil_config.chroot = optarg; break;
 		case 'K':
 		case 'k': break;
-		case 'r': ndc_config.flags |= NDC_ROOT; break;
-		case 's': ndc_config.ssl_port = atoi(optarg);
+		case 'r': axil_config.flags |= AXIL_ROOT; break;
+		case 's': axil_config.ssl_port = atoi(optarg);
 			  break;
-		case 'B': ndc_config.max_body_size = (size_t)strtoull(optarg, NULL, 10); break;
+		case 'B': axil_config.max_body_size = (size_t)strtoull(optarg, NULL, 10); break;
 		case 'm': mods = optarg; break;
 		default:
 			  usage(*argv);
@@ -100,11 +100,11 @@ main(int argc, char *argv[])
 	{
 		switch (c) {
 		case 'K':
-			ndc_certs_add(optarg);
+			axil_certs_add(optarg);
 			break;
 
 		case 'k':
-			ndc_cert_add(optarg);
+			axil_cert_add(optarg);
 			break;
 			
 		default: break;
@@ -116,14 +116,14 @@ main(int argc, char *argv[])
 
 	srand(getpid());
 
-	if (ndc_config.chroot && chdir(ndc_config.chroot) != 0) {
-		fprintf(stderr, "Failed to chdir to %s\n", ndc_config.chroot);
+	if (axil_config.chroot && chdir(axil_config.chroot) != 0) {
+		fprintf(stderr, "Failed to chdir to %s\n", axil_config.chroot);
 		return 1;
 	}
 
-	ndc_register("GET", do_GET, CF_NOAUTH | CF_NOTRIM);
-	ndc_register("PRI", do_GET, CF_NOAUTH | CF_NOTRIM);
-	ndc_register("POST", do_POST, CF_NOAUTH | CF_NOTRIM);
+	axil_register("GET", do_GET, CF_NOAUTH | CF_NOTRIM);
+	axil_register("PRI", do_GET, CF_NOAUTH | CF_NOTRIM);
+	axil_register("POST", do_POST, CF_NOAUTH | CF_NOTRIM);
 
 	ndx_init();
 
@@ -137,7 +137,7 @@ main(int argc, char *argv[])
 		} while (sep);
 	}
 
-	ndc_main();
+	axil_main();
 
 	// temporary
 	exit_all(0);
@@ -145,12 +145,12 @@ main(int argc, char *argv[])
 	return 0;
 }
 
-char *ndc_auth_check(socket_t fd) {
+char *axil_auth_check(socket_t fd) {
 	static char token[BUFSIZ];
 	char cookie[ENV_VALUE_LEN], *p, *eq, *end;
 	const char *username;
 
-	if (ndc_env_get(fd, cookie, "HTTP_COOKIE"))
+	if (axil_env_get(fd, cookie, "HTTP_COOKIE"))
 		return NULL;
 
 	/* Find QSESSION=<token> among potentially multiple cookies */
@@ -182,52 +182,52 @@ char *ndc_auth_check(socket_t fd) {
 }
 
 void
-ndc_update(unsigned long long dt)
+axil_update(unsigned long long dt)
 {
-	on_ndc_update(dt);
+	on_axil_update(dt);
 }
 
-void ndc_vim(socket_t fd, int argc, char *argv[])
+void axil_vim(socket_t fd, int argc, char *argv[])
 {
-	if (!(ndc_flags(fd) & DF_AUTHENTICATED))
+	if (!(axil_flags(fd) & DF_AUTHENTICATED))
 		return;
 
-	on_ndc_vim(fd, argc, argv);
+	on_axil_vim(fd, argc, argv);
 }
 
-void ndc_command(socket_t fd, int argc, char *argv[])
+void axil_command(socket_t fd, int argc, char *argv[])
 {
-	on_ndc_command(fd, argc, argv);
+	on_axil_command(fd, argc, argv);
 }
 
-int ndc_connect(socket_t fd) {
-	if (ndc_config.flags & NDC_AUTOAUTH) {
+int axil_connect(socket_t fd) {
+	if (axil_config.flags & AXIL_AUTOAUTH) {
 #ifndef _WIN32
 		struct passwd *pw = getpwuid(geteuid());
-		ndc_auth(fd, pw ? pw->pw_name : "root");
+		axil_auth(fd, pw ? pw->pw_name : "root");
 #else
-		ndc_auth(fd, "root");
+		axil_auth(fd, "root");
 #endif
 	}
-	on_ndc_connect(fd);
-	return !!(ndc_config.flags & NDC_AUTOAUTH);
+	on_axil_connect(fd);
+	return !!(axil_config.flags & AXIL_AUTOAUTH);
 }
 
-void ndc_disconnect(socket_t fd) {
-	if (!(ndc_flags(fd) & DF_AUTHENTICATED))
+void axil_disconnect(socket_t fd) {
+	if (!(axil_flags(fd) & DF_AUTHENTICATED))
 		return;
 
-	on_ndc_disconnect(fd);
+	on_axil_disconnect(fd);
 }
 
-void ndc_fd_tick(socket_t fd) {
-  on_ndc_tick(fd);
+void axil_fd_tick(socket_t fd) {
+  on_axil_tick(fd);
 }
 
-int ndc_parse(
+int axil_parse(
     socket_t fd,
     unsigned char * input,
     int nread)
 {
-  return on_ndc_parse(fd, input, nread);
+  return on_axil_parse(fd, input, nread);
 }

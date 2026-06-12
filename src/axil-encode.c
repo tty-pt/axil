@@ -5,7 +5,7 @@
 #include <stdio.h>
 #include <string.h>
 
-#include "../include/ttypt/ndc.h"
+#include "../include/ttypt/axil.h"
 
 static int hex_digit_value(int ch)
 {
@@ -18,7 +18,7 @@ static int hex_digit_value(int ch)
 	return -1;
 }
 
-int ndc_url_encode(const char *in, char *out, size_t outlen)
+int axil_url_encode(const char *in, char *out, size_t outlen)
 {
 	size_t j = 0;
 
@@ -37,7 +37,7 @@ int ndc_url_encode(const char *in, char *out, size_t outlen)
 	return (int)j;
 }
 
-size_t ndc_url_decode(const char *src, size_t src_len,
+size_t axil_url_decode(const char *src, size_t src_len,
                       char *out, size_t out_len)
 {
 	size_t si;
@@ -70,7 +70,7 @@ size_t ndc_url_decode(const char *src, size_t src_len,
 	return oi;
 }
 
-int ndc_json_escape(const char *in, char *out, size_t outlen)
+int axil_json_escape(const char *in, char *out, size_t outlen)
 {
 	size_t j = 0;
 
@@ -102,7 +102,7 @@ int ndc_json_escape(const char *in, char *out, size_t outlen)
 	return 0;
 }
 
-int ndc_slugify(const char *title, size_t title_len,
+int axil_slugify(const char *title, size_t title_len,
                 char *result, size_t result_len)
 {
 	static iconv_t cd = (iconv_t)-1;

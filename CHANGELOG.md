@@ -16,12 +16,12 @@
 - **New:** `ndc_sendfile(fd, path)` — serve a static file with auto-detected MIME type.
 - **New:** `ndc_status_text(code)` — get HTTP status text for a code.
 - **New:** `ndc_config.max_body_size` field (0 = default 10 MB); configurable via `-B` CLI flag.
-- **New:** `NDC_AUTOAUTH = 32` server flag — auto-authenticate all WebSocket connections (dev/testing only).
+- **New:** `AXIL_AUTOAUTH = 32` server flag — auto-authenticate all WebSocket connections (dev/testing only).
 - **New:** `DF_EXTERN = 512`, `DF_WS_WAITING = 128`, `DF_WS_PROXY_PENDING = 256` descriptor flags.
 - **New weak hooks:** `ndc_fd_tick(fd)`, `ndc_parse(fd, input, nread)`.
 - **New NDX hooks:** `on_ndc_tick`, `on_ndc_parse`.
 - **New (POSIX-only):** `ndc_fd_watch()`, `ndc_fd_unwatch()`, `ndc_fork_child_reset()`, `ndc_get_pw()`, `ndc_send_telnet_cmd()` / `TELNET_CMD()` macro.
 - **New:** `ndc_clear_active()`.
 - **New:** `ndc_register_handler()` now supports `:param` path patterns (e.g. `/items/:id`), exposing matched segments as `PATTERN_PARAM_<NAME>` environment variables.
-- **Breaking:** Public headers moved to `ttypt/` subdirectory (e.g. `#include <ttypt/ndc.h>`).
+- **Breaking:** Public headers moved to `ttypt/` subdirectory (e.g. `#include <ttypt/axil.h>`).
 - **New:** Plugin modules can declare dependencies via `ndx_deps[]` for the libndx loader.

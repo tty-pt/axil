@@ -1,7 +1,7 @@
 #!/bin/sh -e
 
 testbin=./bin/test
-ndc=./bin/ndc
+axil=./bin/axil
 testauth=./bin/test-auth
 testroutes=./bin/test-routes
 
@@ -59,7 +59,7 @@ wait_for_port_tcp() {
 fetch_root() {
 	port=$1
 	if command -v curl >/dev/null 2>&1; then
-		curl -sS --max-time 2 "http://127.0.0.1:$port/__ndc_test_missing__"
+		curl -sS --max-time 2 "http://127.0.0.1:$port/__axil_test_missing__"
 		return $?
 	fi
 
@@ -68,7 +68,7 @@ fetch_root() {
 		return 1
 	fi
 
-	printf "GET /__ndc_test_missing__ HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n" |
+	printf "GET /__axil_test_missing__ HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n" |
 		nc 127.0.0.1 "$port" | sed -n '/^\r\{0,1\}$/,$p' | sed '1d'
 }
 
@@ -140,7 +140,7 @@ assert_not_exported() {
 		echo "Skipping export check: nm not found" >&2
 		return 0
 	fi
-	nm -D lib/libndc.so | grep -F " $sym" >/dev/null 2>&1 && {
+	nm -D lib/libaxil.so | grep -F " $sym" >/dev/null 2>&1 && {
 		echo "Test FAILED! symbol exported: $sym" >&2
 		return 1
 	}
@@ -158,8 +158,8 @@ raw_request() {
 }
 
 $testbin | diff expects.txt -
-assert usage sh -c "$ndc -? 2>&1"
-assert_not_exported ndc_platform
+assert usage sh -c "$axil -? 2>&1"
+assert_not_exported axil_platform
 assert_not_exported descr_map
 
 if ! command -v curl >/dev/null 2>&1 && ! command -v nc >/dev/null 2>&1; then
@@ -168,8 +168,8 @@ if ! command -v curl >/dev/null 2>&1 && ! command -v nc >/dev/null 2>&1; then
 fi
 
 port=$((18000 + $$ % 1000))
-$ndc -d -p "$port" >/dev/null 2>&1 &
-ndc_pid=$!
+$axil -d -p "$port" >/dev/null 2>&1 &
+axil_pid=$!
 
 if wait_for_port "$port"; then
 	assert http-404 fetch_root "$port"
@@ -186,12 +186,12 @@ if wait_for_port "$port"; then
 		fi
 	fi
 else
-	echo "ndc failed to listen on $port" >&2
-	kill "$ndc_pid" >/dev/null 2>&1 || true
+	echo "axil failed to listen on $port" >&2
+	kill "$axil_pid" >/dev/null 2>&1 || true
 	exit 1
 fi
 
-kill "$ndc_pid" >/dev/null 2>&1 || true
+kill "$axil_pid" >/dev/null 2>&1 || true
 
 auth_dir=$(mktemp -d)
 mkdir -p "$auth_dir/sessions"
@@ -245,7 +245,7 @@ printf "<!doctype html><title>static</title>\n" >"$static_dir/public/index.html"
 printf "\0asm\1\0\0\0" >"$static_dir/public/app.wasm"
 printf "public /*\n" >"$static_dir/serve.allow"
 static_port=$((port + 18))
-$ndc -p "$static_port" -C "$static_dir" >/dev/null 2>&1 &
+$axil -p "$static_port" -C "$static_dir" >/dev/null 2>&1 &
 static_pid=$!
 
 if wait_for_port_tcp "$static_port"; then
@@ -255,7 +255,7 @@ if wait_for_port_tcp "$static_port"; then
 	assert_contains wasm-type "Content-Type: application/wasm" fetch_headers "$static_port" "/app.wasm"
 	assert_contains wasm-coep "Cross-Origin-Embedder-Policy: require-corp" fetch_headers "$static_port" "/app.wasm"
 else
-	echo "static ndc failed to listen on $static_port" >&2
+	echo "static axil failed to listen on $static_port" >&2
 	kill "$static_pid" >/dev/null 2>&1 || true
 	exit 1
 fi
@@ -267,7 +267,7 @@ cp tests/fixtures/autoindex/serve.allow "$ai_dir/serve.allow"
 cp tests/fixtures/autoindex/serve.autoindex "$ai_dir/serve.autoindex"
 cp -R tests/fixtures/autoindex/data "$ai_dir/data"
 ai_port=$((port + 30))
-$ndc -p "$ai_port" -C "$ai_dir" >/dev/null 2>&1 &
+$axil -p "$ai_port" -C "$ai_dir" >/dev/null 2>&1 &
 ai_pid=$!
 
 if wait_for_port_tcp "$ai_port"; then
@@ -280,7 +280,7 @@ if wait_for_port_tcp "$ai_port"; then
 		echo "Skipping autoindex tests: curl not found" >&2
 	fi
 else
-	echo "autoindex ndc failed to listen on $ai_port" >&2
+	echo "autoindex axil failed to listen on $ai_port" >&2
 	kill "$ai_pid" >/dev/null 2>&1 || true
 	exit 1
 fi
@@ -294,14 +294,14 @@ if command -v openssl >/dev/null 2>&1 && command -v curl >/dev/null 2>&1; then
 	printf "localhost:%s:%s\n" "$tls_dir/cert.pem" "$tls_dir/key.pem" >"$tls_dir/certs.txt"
 	ssl_port=$((port + 40))
 	http_port=$((port + 41))
-	$ndc -d -p "$http_port" -s "$ssl_port" -K "$tls_dir/certs.txt" >/dev/null 2>&1 &
+	$axil -d -p "$http_port" -s "$ssl_port" -K "$tls_dir/certs.txt" >/dev/null 2>&1 &
 	ssl_pid=$!
 
 	if wait_for_port_tcp "$http_port"; then
 		shead=$(curl -k -sS -i --max-time 2 "https://127.0.0.1:$ssl_port/" | sed -n '1p' | tr -d '\r')
 		echo "$shead" | grep -F "HTTP/1.1" >/dev/null 2>&1 || { echo "TLS status missing" >&2; exit 1; }
 	else
-		echo "tls ndc failed to listen on $http_port" >&2
+		echo "tls axil failed to listen on $http_port" >&2
 		kill "$ssl_pid" >/dev/null 2>&1 || true
 		exit 1
 	fi

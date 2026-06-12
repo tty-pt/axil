@@ -1,8 +1,8 @@
-CFLAGS-libndc-o := -fPIC
-CFLAGS-ndc-status-o := -fPIC
-CFLAGS-ndc-encode-o := -fPIC
-CFLAGS-ndc-posix-o := -fPIC
-CFLAGS-ndc-o :=
+CFLAGS-libaxil-o := -fPIC
+CFLAGS-axil-status-o := -fPIC
+CFLAGS-axil-encode-o := -fPIC
+CFLAGS-axil-posix-o := -fPIC
+CFLAGS-axil-o :=
 CFLAGS-test-o :=
 CFLAGS-test-auth-o :=
 CFLAGS-test-routes-o :=

@@ -1,13 +1,13 @@
-#ifndef NDC_PLATFORM_H
-#define NDC_PLATFORM_H
+#ifndef AXIL_PLATFORM_H
+#define AXIL_PLATFORM_H
 
 #include <sys/stat.h>
 
-#include "../include/ttypt/ndc.h"
+#include "../include/ttypt/axil.h"
 
 struct descr;
 
-struct ndc_platform_ops {
+struct axil_platform_ops {
 	void (*init_pre_bind)(void);
 	void (*init_post_bind)(void);
 	void (*cleanup_descr)(struct descr *d);
@@ -22,6 +22,6 @@ struct ndc_platform_ops {
 	int (*exec_loop)(socket_t fd);
 };
 
-extern const struct ndc_platform_ops *ndc_platform;
+extern const struct axil_platform_ops *axil_platform;
 
 #endif

@@ -1,26 +1,26 @@
-all := libndc ndc test test-auth test-routes
-INSTALL_BIN := ndc
+all := libaxil axil test test-auth test-routes
+INSTALL_BIN := axil
 
-LDLIBS-libndc-Linux := -lrt
-LDLIBS-libndc := -lqmap -lqsys -lcrypto -lssl -lndx
-LDFLAGS-libndc-Darwin := -undefined dynamic_lookup
-LDLIBS-libndc-Linux := -lc
-LDLIBS-libndc-Windows := -lws2_32
-LDLIBS-ndc := -lndc -lndx -lqsys
-LDLIBS-test := -lndc
-LDLIBS-test-auth := -lndc -lqsys
-LDLIBS-test-routes := -lndc
+LDLIBS-libaxil-Linux := -lrt
+LDLIBS-libaxil := -lqmap -lqsys -lcrypto -lssl -lndx
+LDFLAGS-libaxil-Darwin := -undefined dynamic_lookup
+LDLIBS-libaxil-Linux := -lc
+LDLIBS-libaxil-Windows := -lws2_32
+LDLIBS-axil := -laxil -lndx -lqsys
+LDLIBS-test := -laxil
+LDLIBS-test-auth := -laxil -lqsys
+LDLIBS-test-routes := -laxil
 
 CFLAGS := -g
 CFLAGS-Windows := -masm=intel
 
-libndc-obj-y-Linux := src/ndc-posix.o
-libndc-obj-y-Darwin := src/ndc-posix.o
-libndc-obj-y-OpenBSD := src/ndc-posix.o
-libndc-obj-y-Msys := src/ndc-win.o
-libndc-obj-y-MingW := src/ndc-win.o
-libndc-obj-y-MinGW64 := src/ndc-win.o
-libndc-obj-y := src/ndc-status.o src/ndc-encode.o
+libaxil-obj-y-Linux := src/axil-posix.o
+libaxil-obj-y-Darwin := src/axil-posix.o
+libaxil-obj-y-OpenBSD := src/axil-posix.o
+libaxil-obj-y-Msys := src/axil-win.o
+libaxil-obj-y-MingW := src/axil-win.o
+libaxil-obj-y-MinGW64 := src/axil-win.o
+libaxil-obj-y := src/axil-status.o src/axil-encode.o
 
 -include ../mk/include.mk
 

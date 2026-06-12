@@ -1,4 +1,4 @@
-#include <ttypt/ndc.h>
+#include <ttypt/axil.h>
 
 static const char *status_map[512] = {
 	[100] = "Continue",
@@ -71,7 +71,7 @@ static const char *status_map[512] = {
 };
 
 const char *
-ndc_status_text(int code)
+axil_status_text(int code)
 {
 	if (code < 0 || code > 511)
 		return "Unknown";

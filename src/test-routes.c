@@ -1,4 +1,4 @@
-#include "../include/ttypt/ndc.h"
+#include "../include/ttypt/axil.h"
 
 #include <signal.h>
 #include <stdio.h>
@@ -12,10 +12,10 @@ route_respond(socket_t fd, const char *body)
 	char len_buf[32];
 
 	snprintf(len_buf, sizeof(len_buf), "%zu", strlen(body));
-	ndc_header_set(fd, "Content-Type", "text/plain");
-	ndc_header_set(fd, "Content-Length", len_buf);
-	ndc_header_set(fd, "Connection", "close");
-	ndc_respond(fd, 200, body);
+	axil_header_set(fd, "Content-Type", "text/plain");
+	axil_header_set(fd, "Content-Length", len_buf);
+	axil_header_set(fd, "Connection", "close");
+	axil_respond(fd, 200, body);
 	return 0;
 }
 
@@ -25,7 +25,7 @@ route_song(socket_t fd, char *body)
 	char id[ENV_VALUE_LEN] = {0};
 
 	(void)body;
-	ndc_env_get(fd, id, "PATTERN_PARAM_ID");
+	axil_env_get(fd, id, "PATTERN_PARAM_ID");
 	return route_respond(fd, id);
 }
 
@@ -36,7 +36,7 @@ route_songbook_edit(socket_t fd, char *body)
 	char resp[ENV_VALUE_LEN + 16];
 
 	(void)body;
-	ndc_env_get(fd, id, "PATTERN_PARAM_ID");
+	axil_env_get(fd, id, "PATTERN_PARAM_ID");
 	snprintf(resp, sizeof(resp), "edit:%s", id);
 	return route_respond(fd, resp);
 }
@@ -55,7 +55,7 @@ route_chords(socket_t fd, char *body)
 	char resp[ENV_VALUE_LEN + 16];
 
 	(void)body;
-	ndc_env_get(fd, id, "PATTERN_PARAM_ID");
+	axil_env_get(fd, id, "PATTERN_PARAM_ID");
 	snprintf(resp, sizeof(resp), "chords:%s", id);
 	return route_respond(fd, resp);
 }
@@ -65,12 +65,12 @@ main(int argc, char *argv[])
 {
 	int opt;
 
-	ndc_config.flags = 0;
+	axil_config.flags = 0;
 
 	while ((opt = getopt(argc, argv, "p:")) != -1) {
 		switch (opt) {
 		case 'p':
-			ndc_config.port = (unsigned)atoi(optarg);
+			axil_config.port = (unsigned)atoi(optarg);
 			break;
 		default:
 			fprintf(stderr, "usage: %s -p <port>\n", argv[0]);
@@ -78,17 +78,17 @@ main(int argc, char *argv[])
 		}
 	}
 
-	ndc_register_handler("GET:/song/:id", route_song);
-	ndc_register_handler("GET:/sb/*", route_songbook_catchall);
-	ndc_register_handler("GET:/sb/:id/edit", route_songbook_edit);
-	ndc_register_handler("/chords/:id", route_chords);
-	ndc_register("GET", do_GET, CF_NOAUTH | CF_NOTRIM);
-	ndc_register("PRI", do_GET, CF_NOAUTH | CF_NOTRIM);
-	ndc_register("POST", do_POST, CF_NOAUTH | CF_NOTRIM);
+	axil_register_handler("GET:/song/:id", route_song);
+	axil_register_handler("GET:/sb/*", route_songbook_catchall);
+	axil_register_handler("GET:/sb/:id/edit", route_songbook_edit);
+	axil_register_handler("/chords/:id", route_chords);
+	axil_register("GET", do_GET, CF_NOAUTH | CF_NOTRIM);
+	axil_register("PRI", do_GET, CF_NOAUTH | CF_NOTRIM);
+	axil_register("POST", do_POST, CF_NOAUTH | CF_NOTRIM);
 
 #if defined(SIGPIPE)
 	signal(SIGPIPE, SIG_IGN);
 #endif
 
-	return ndc_main();
+	return axil_main();
 }
