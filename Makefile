@@ -2,6 +2,7 @@ all := libaxil axil test test-auth test-routes
 INSTALL_BIN := axil
 
 LDLIBS-libaxil-Linux := -lrt
+LDLIBS-libaxil-OpenBSD := -liconv
 LDLIBS-libaxil := -lqmap -lqsys -lcrypto -lssl -lndx
 LDFLAGS-libaxil-Darwin := -undefined dynamic_lookup
 LDLIBS-libaxil-Linux := -lc
