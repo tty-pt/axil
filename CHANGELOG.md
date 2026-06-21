@@ -1,8 +1,8 @@
 ## [v1.1.0] - 2026-04-18
 
 - **Breaking:** `ndc_handler_t` return type changed from `void` to `int`.
-- **Breaking:** `on_ndc_init` NDX hook removed.
-- **Breaking:** NDX hooks `on_ndc_vim`, `on_ndc_command`, `on_ndc_connect`, `on_ndc_disconnect`: `fd` parameter type changed from `int` to `socket_t`.
+- **Breaking:** `on_ndc_init` XY hook removed.
+- **Breaking:** XY hooks `on_ndc_vim`, `on_ndc_command`, `on_ndc_connect`, `on_ndc_disconnect`: `fd` parameter type changed from `int` to `socket_t`.
 - **Breaking:** `DF_RESERVED = 64` renamed to `DF_TUNNEL = 64`.
 - **Breaking:** `ndc_header(fd, key, value)` renamed to `ndc_header_set(fd, key, value)`.
 - **Breaking:** `ndc_head(fd, code)` and `ndc_body(fd, body)` replaced by `ndc_respond(fd, code, body)`. Passing `NULL` body sends only the status line and headers, leaving the connection open for streaming.
@@ -19,9 +19,9 @@
 - **New:** `AXIL_AUTOAUTH = 32` server flag — auto-authenticate all WebSocket connections (dev/testing only).
 - **New:** `DF_EXTERN = 512`, `DF_WS_WAITING = 128`, `DF_WS_PROXY_PENDING = 256` descriptor flags.
 - **New weak hooks:** `ndc_fd_tick(fd)`, `ndc_parse(fd, input, nread)`.
-- **New NDX hooks:** `on_ndc_tick`, `on_ndc_parse`.
+- **New XY hooks:** `on_ndc_tick`, `on_ndc_parse`.
 - **New (POSIX-only):** `ndc_fd_watch()`, `ndc_fd_unwatch()`, `ndc_fork_child_reset()`, `ndc_get_pw()`, `ndc_send_telnet_cmd()` / `TELNET_CMD()` macro.
 - **New:** `ndc_clear_active()`.
 - **New:** `ndc_register_handler()` now supports `:param` path patterns (e.g. `/items/:id`), exposing matched segments as `PATTERN_PARAM_<NAME>` environment variables.
 - **Breaking:** Public headers moved to `ttypt/` subdirectory (e.g. `#include <ttypt/axil.h>`).
-- **New:** Plugin modules can declare dependencies via `ndx_deps[]` for the libndx loader.
+- **New:** Plugin modules can declare dependencies via `xy_deps[]` for the libxylem loader.

@@ -9,7 +9,7 @@
 #include "../include/iio.h"
 #include "axil-internal.h"
 
-#include <ttypt/ndx.h>
+#include <ttypt/xy.h>
 
 #include <ctype.h>
 #include <errno.h>

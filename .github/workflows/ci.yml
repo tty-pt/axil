@@ -10,15 +10,15 @@ jobs:
     uses: tty-pt/ci/.github/workflows/all-in-one.yml@main
     with:
       name: libndc
-      deps: "libqmap,libndx,libssl-dev"
-      deps_apk: "libqmap,libndx,openssl-dev"
-      deps_pacman: "libqmap,libndx,openssl"
-      deps_pacman_mingw: "mingw-w64-libqmap,mingw-w64-libndx,mingw-w64-openssl"
-      deps_rpm: "libqmap,libndx,openssl-devel"
-      deps_brew: "libqmap,libndx,openssl"
-      deps_openbsd: "libqmap,libndx,openssl"
+      deps: "libqmap,libxylem,libssl-dev"
+      deps_apk: "libqmap,libxylem,openssl-dev"
+      deps_pacman: "libqmap,libxylem,openssl"
+      deps_pacman_mingw: "mingw-w64-libqmap,mingw-w64-libxylem,mingw-w64-openssl"
+      deps_rpm: "libqmap,libxylem,openssl-devel"
+      deps_brew: "libqmap,libxylem,openssl"
+      deps_openbsd: "libqmap,libxylem,openssl"
       deps_winget: "mingw-w64-x86_64-openssl"
-      deps_winget_tty: "libqsys,libqmap,libndx"
+      deps_winget_tty: "libqsys,libqmap,libxylem"
       publish_to: "deb,apk,rpm,brew,openbsd,winget"
     secrets:
       HOST: ${{ secrets.OPENBSD_HOST }}

@@ -5,11 +5,11 @@
 
 #include <ttypt/qsys.h>
 #include <ttypt/qmap.h>
-#include <ttypt/ndx.h>
+#include <ttypt/xy.h>
 
-struct ndx_ctx ndx;
+struct xy_ctx xy;
 
-NDX_HOOK_DECL(const char *, get_session_user,
+XY_DECL(const char *, get_session_user,
     const char *, token);
 
 #ifdef _WIN32
@@ -21,14 +21,14 @@ typedef SOCKET socket_t;
 typedef int socket_t;
 #endif
 
-NDX_HOOK_DEF(int, on_axil_exit, int, i);
-NDX_HOOK_DEF(int, on_axil_update, unsigned long long, dt);
-NDX_HOOK_DEF(int, on_axil_vim, socket_t, fd, int, argc, char **, argv);
-NDX_HOOK_DEF(int, on_axil_command, socket_t, fd, int, argc, char **, argv);
-NDX_HOOK_DEF(int, on_axil_connect, socket_t, fd);
-NDX_HOOK_DEF(int, on_axil_disconnect, socket_t, fd);
-NDX_HOOK_DEF(int, on_axil_tick, socket_t, fd);
-NDX_HOOK_DEF(int, on_axil_parse,
+XY_DEF(int, on_axil_exit, int, i);
+XY_DEF(int, on_axil_update, unsigned long long, dt);
+XY_DEF(int, on_axil_vim, socket_t, fd, int, argc, char **, argv);
+XY_DEF(int, on_axil_command, socket_t, fd, int, argc, char **, argv);
+XY_DEF(int, on_axil_connect, socket_t, fd);
+XY_DEF(int, on_axil_disconnect, socket_t, fd);
+XY_DEF(int, on_axil_tick, socket_t, fd);
+XY_DEF(int, on_axil_parse,
     socket_t, fd,
     unsigned char *, input,
     int, nread);
@@ -125,14 +125,14 @@ main(int argc, char *argv[])
 	axil_register("PRI", do_GET, CF_NOAUTH | CF_NOTRIM);
 	axil_register("POST", do_POST, CF_NOAUTH | CF_NOTRIM);
 
-	ndx_init();
+	xy_init();
 
 	if (mods) {
 		char *p = mods, *sep;
 		do {
 			sep = strchr(p, ':');
 			if (sep) *sep = '\0';
-			ndx_load(p);
+			xy_load(p);
 			if (sep) { *sep = ':'; p = sep + 1; }
 		} while (sep);
 	}

@@ -291,10 +291,10 @@ axil_slugify("Hello World", 11, out, sizeof(out));   // "hello-world"
 | `axil_json_escape(in, out, outlen)` | JSON-escape a string | 0 on success |
 | `axil_slugify(title, title_len, result, result_len)` | Convert title to filesystem-safe slug | 0 on success |
 
-### NDX Hooks
+### XY Hooks
 
-When built with libndx support, modules may implement these hooks (declared in
-`<ttypt/axil-ndx.h>`):
+When built with libxylem support, modules may implement these hooks (declared in
+`<ttypt/axil-xy.h>`):
 
 | Hook | Signature | Description |
 |------|-----------|-------------|
@@ -434,8 +434,8 @@ Sibling modules:
 - `../axil-tty`: browser terminal / WebSocket PTY support (provides `axil_pty()`).
 - `../axil-cgi`: CGI fallback support for executable `./index.sh`.
 
-Modules can register HTTP handlers, fallback handlers, commands, and `libndx`
-hooks (see [NDX Hooks](#ndx-hooks) above).
+Modules can register HTTP handlers, fallback handlers, commands, and `libxylem`
+hooks (see [XY Hooks](#xy-hooks) above).
 
 - Man pages: `man axil` and `man axil.3`
 - Full API: `include/ttypt/axil.h`
