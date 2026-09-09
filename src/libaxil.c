@@ -1551,6 +1551,51 @@ int axil_query_param(const char *name, char *buf, size_t buf_len)
 	return (int)len;
 }
 
+int axil_param(socket_t fd, const char *name, char *buf, size_t buf_len)
+{
+	if (!name || !buf || !buf_len)
+		return -1;
+
+	int rc = axil_query_param(name, buf, buf_len);
+	if (rc > 0 && buf[0] != '\0')
+		return rc;
+
+	if (fd > 0) {
+		char env_key[128];
+		size_t prefix_len = sizeof("PATTERN_PARAM_") - 1;
+		memcpy(env_key, "PATTERN_PARAM_", prefix_len);
+		size_t i = 0;
+		for (; name[i] && prefix_len + i + 1 < sizeof(env_key); i++) {
+			char c = name[i];
+			if (c >= 'a' && c <= 'z')
+				c -= 32;
+			env_key[prefix_len + i] = c;
+		}
+		env_key[prefix_len + i] = '\0';
+		if (axil_env_get(fd, buf, buf_len, env_key) == 0 && buf[0] != '\0')
+			return (int)strlen(buf);
+
+		/* Fall back to verbatim case pattern param if uppercase didn't match */
+		snprintf(env_key, sizeof(env_key), "PATTERN_PARAM_%s", name);
+		if (axil_env_get(fd, buf, buf_len, env_key) == 0 && buf[0] != '\0')
+			return (int)strlen(buf);
+	}
+
+	return -1;
+}
+
+int axil_param_int(socket_t fd, const char *name, int default_val)
+{
+	char tmp[32];
+	if (axil_param(fd, name, tmp, sizeof(tmp)) <= 0)
+		return default_val;
+	char *end = NULL;
+	long val = strtol(tmp, &end, 10);
+	if (end == tmp)
+		return default_val;
+	return (int)val;
+}
+
 static void
 _env_prep(socket_t fd, char *document_uri, char *param, char *method)
 {

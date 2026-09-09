@@ -258,6 +258,15 @@ int axil_query_parse(char *body);
  *  Returns the number of bytes written, or -1 if the key was not found. */
 int axil_query_param(const char *name, char *buf, size_t buf_len);
 
+/** Look up a parameter by name from parsed query/form body, falling back
+ *  to route pattern parameters (PATTERN_PARAM_<NAME>). Returns bytes written,
+ *  or -1 if the parameter was not found. */
+int axil_param(socket_t fd, const char *name, char *buf, size_t buf_len);
+
+/** Look up an integer parameter by name via axil_param(), returning default_val
+ *  if missing or unparseable. */
+int axil_param_int(socket_t fd, const char *name, int default_val);
+
 /** Get HTTP status text for a status code. Returns "Unknown" for invalid codes. */
 const char *axil_status_text(int code);
 
@@ -336,6 +345,17 @@ axil_respond_plain(socket_t fd, int status, const char *msg)
 {
 	axil_header_set(fd, "Content-Type", "text/plain");
 	axil_respond(fd, status, msg ? msg : "");
+	return status / 100 != 2;
+}
+
+/** Send a JSON response and close the connection.
+ *  Returns 0 on 2xx status codes, 1 otherwise. */
+static inline int
+axil_respond_json(socket_t fd, int status, const char *json)
+{
+	axil_header_set(fd, "Content-Type", "application/json");
+	axil_header_set(fd, "Cache-Control", "no-store, no-cache, must-revalidate");
+	axil_respond(fd, status, json ? json : "{}");
 	return status / 100 != 2;
 }
 
