@@ -6,3 +6,4 @@ CFLAGS-axil-o :=
 CFLAGS-test-o :=
 CFLAGS-test-auth-o :=
 CFLAGS-test-routes-o :=
+CFLAGS-test-defer-o :=

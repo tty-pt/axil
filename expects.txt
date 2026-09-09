@@ -25,6 +25,10 @@ axil_env_get ok
 axil_env_put ok
 axil_exec ok
 axil_execbuf ok
+axil_respond_defer ok
+axil_respond_defer_finish ok
+axil_respond_defer_done ok
+axil_respond_defer_abort ok
 axil_update unset
 axil_vim unset
 axil_accept unset
@@ -33,3 +37,4 @@ axil_disconnect unset
 axil_command unset
 axil_flush unset
 axil_auth_check unset
+errors=0

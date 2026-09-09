@@ -18,6 +18,7 @@
 #include <openssl/ssl.h>
 #include <signal.h>
 #include <stdlib.h>
+#include <stdint.h>
 #include <string.h>
 #if !defined(_WIN32)
 #include <sys/mman.h>
@@ -285,6 +286,88 @@ void axil_respond(socket_t fd, int code, const char *body)
 		axil_close(fd);
 	else
 		axil_write_remaining(fd);
+}
+
+void *axil_respond_defer(socket_t fd, int code)
+{
+	struct descr *d;
+	char hdr[4096];
+	int hlen;
+
+	if (fd <= 0 || fd >= FD_SETSIZE)
+		return NULL;
+	d = &descr_map[fd];
+	if (d->flags & (DF_DEFERRED | DF_WEBSOCKET))
+		return NULL;
+
+	axil_default_response_headers(fd);
+
+	hlen = snprintf(hdr, sizeof(hdr), "HTTP/1.1 %d %s\r\n%s\r\n",
+			code, axil_status_text(code), d->resp_headers);
+	d->resp_headers[0] = '\0';
+
+	if (hlen > 0)
+		axil_write(fd, hdr, (size_t)hlen);
+
+	d->flags |= DF_DEFERRED;
+	return (void *)(intptr_t)fd;
+}
+
+void axil_respond_defer_finish(void *handle, const char *body)
+{
+	socket_t fd = (socket_t)(intptr_t)handle;
+	struct descr *d;
+
+	if (fd <= 0 || fd >= FD_SETSIZE)
+		return;
+	d = &descr_map[fd];
+	if (!(d->flags & DF_DEFERRED))
+		return;
+
+	d->flags &= ~DF_DEFERRED;
+
+	if (body)
+		axil_write(fd, (void *)body, strlen(body));
+
+	d->flags |= DF_TO_CLOSE;
+	if (!d->remaining_len)
+		axil_close(fd);
+	else
+		axil_write_remaining(fd);
+}
+
+void axil_respond_defer_done(void *handle)
+{
+	socket_t fd = (socket_t)(intptr_t)handle;
+	struct descr *d;
+
+	if (fd <= 0 || fd >= FD_SETSIZE)
+		return;
+	d = &descr_map[fd];
+	if (!(d->flags & DF_DEFERRED))
+		return;
+
+	d->flags &= ~DF_DEFERRED;
+	d->flags |= DF_TO_CLOSE;
+	if (!d->remaining_len)
+		axil_close(fd);
+	else
+		axil_write_remaining(fd);
+}
+
+void axil_respond_defer_abort(void *handle)
+{
+	socket_t fd = (socket_t)(intptr_t)handle;
+	struct descr *d;
+
+	if (fd <= 0 || fd >= FD_SETSIZE)
+		return;
+	d = &descr_map[fd];
+	if (!(d->flags & DF_DEFERRED))
+		return;
+
+	d->flags &= ~DF_DEFERRED;
+	axil_close(fd);
 }
 
 static void axil_raw_descr_reset(socket_t fd);
@@ -620,7 +703,7 @@ static void descr_new(int ssl)
 
 #ifdef TCP_NODELAY
 	int nodelay = 1;
-	setsockopt(fd, IPPROTO_TCP, TCP_NODELAY, &nodelay, sizeof(nodelay));
+	setsockopt(fd, IPPROTO_TCP, TCP_NODELAY, (char *)&nodelay, sizeof(nodelay));
 #endif
 
 	FD_SET(fd, &fds_active);
@@ -1472,7 +1555,7 @@ int axil_env_get(socket_t fd, char *target, size_t dest_len, char *key)
 	if (!skey)
 		return 1;
 
-	strlcpy(target, skey, dest_len);
+	qsys_strlcpy(target, (const char *)skey, dest_len);
 	return 0;
 }
 
@@ -1551,15 +1634,45 @@ int axil_query_param(const char *name, char *buf, size_t buf_len)
 	return (int)len;
 }
 
-int axil_param(socket_t fd, const char *name, char *buf, size_t buf_len)
+int axil_req_param(socket_t fd, const char *body, const char *name, char *buf, size_t buf_len)
 {
 	if (!name || !buf || !buf_len)
 		return -1;
 
+	/* 1. Check already parsed query/form database */
 	int rc = axil_query_param(name, buf, buf_len);
 	if (rc > 0 && buf[0] != '\0')
 		return rc;
 
+	/* 2. On-demand parse body if provided, non-empty, and not multipart */
+	if (body && body[0] != '\0') {
+		char ct[128] = { 0 };
+		int is_multipart = 0;
+		if (fd > 0) {
+			axil_env_get(fd, ct, sizeof(ct), "CONTENT_TYPE");
+			if (strstr(ct, "multipart/form-data") != NULL)
+				is_multipart = 1;
+		}
+		if (!is_multipart && body[0] != '-') {
+			axil_query_parse((char *)body);
+			rc = axil_query_param(name, buf, buf_len);
+			if (rc > 0 && buf[0] != '\0')
+				return rc;
+		}
+	}
+
+	/* 3. On-demand parse QUERY_STRING if present */
+	if (fd > 0) {
+		char qs[1024] = { 0 };
+		if (axil_env_get(fd, qs, sizeof(qs), "QUERY_STRING") == 0 && qs[0] != '\0') {
+			axil_query_parse(qs);
+			rc = axil_query_param(name, buf, buf_len);
+			if (rc > 0 && buf[0] != '\0')
+				return rc;
+		}
+	}
+
+	/* 4. Check route pattern env vars */
 	if (fd > 0) {
 		char env_key[128];
 		size_t prefix_len = sizeof("PATTERN_PARAM_") - 1;
@@ -1584,16 +1697,45 @@ int axil_param(socket_t fd, const char *name, char *buf, size_t buf_len)
 	return -1;
 }
 
-int axil_param_int(socket_t fd, const char *name, int default_val)
+int axil_req_param_int(socket_t fd, const char *body, const char *name, int default_val)
 {
 	char tmp[32];
-	if (axil_param(fd, name, tmp, sizeof(tmp)) <= 0)
+	if (axil_req_param(fd, body, name, tmp, sizeof(tmp)) <= 0)
 		return default_val;
 	char *end = NULL;
 	long val = strtol(tmp, &end, 10);
 	if (end == tmp)
 		return default_val;
 	return (int)val;
+}
+
+int axil_req_param_bool(socket_t fd, const char *body, const char *name, int default_val)
+{
+	char tmp[16];
+	if (axil_req_param(fd, body, name, tmp, sizeof(tmp)) <= 0)
+		return default_val;
+	if (strcmp(tmp, "1") == 0 || strcasecmp(tmp, "true") == 0 ||
+	    strcasecmp(tmp, "on") == 0 || strcasecmp(tmp, "yes") == 0)
+		return 1;
+	if (strcmp(tmp, "0") == 0 || strcasecmp(tmp, "false") == 0 ||
+	    strcasecmp(tmp, "off") == 0 || strcasecmp(tmp, "no") == 0)
+		return 0;
+	return default_val;
+}
+
+int axil_param(socket_t fd, const char *name, char *buf, size_t buf_len)
+{
+	return axil_req_param(fd, NULL, name, buf, buf_len);
+}
+
+int axil_param_int(socket_t fd, const char *name, int default_val)
+{
+	return axil_req_param_int(fd, NULL, name, default_val);
+}
+
+int axil_param_bool(socket_t fd, const char *name, int default_val)
+{
+	return axil_req_param_bool(fd, NULL, name, default_val);
 }
 
 static void
@@ -1656,7 +1798,7 @@ static void http_date(time_t t, char *out, size_t outlen)
 	}
 
 	struct tm tm_buf;
-	struct tm *tm_info = gmtime_r(&t, &tm_buf);
+	struct tm *tm_info = qsys_gmtime_r(&t, &tm_buf);
 	if (tm_info) {
 		strftime(out, outlen, "%a, %d %b %Y %H:%M:%S GMT", tm_info);
 		if (outlen >= sizeof(cached_date)) {

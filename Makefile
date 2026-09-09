@@ -1,4 +1,4 @@
-all := libaxil axil test test-auth test-routes
+all := libaxil axil test test-auth test-routes test-defer
 INSTALL_BIN := axil
 
 LDLIBS-libaxil-Linux := -lrt
@@ -6,11 +6,12 @@ LDLIBS-libaxil-OpenBSD := -liconv
 LDLIBS-libaxil := -lqmap -lqsys -lcrypto -lssl -lxylem
 LDFLAGS-libaxil-Darwin := -undefined dynamic_lookup
 LDLIBS-libaxil-Linux := -lc
-LDLIBS-libaxil-Windows := -lws2_32
+LDLIBS-libaxil-Windows := -lws2_32 -liconv
 LDLIBS-axil := -laxil -lxylem -lqsys
 LDLIBS-test := -laxil
 LDLIBS-test-auth := -laxil -lqsys
 LDLIBS-test-routes := -laxil
+LDLIBS-test-defer := -laxil
 
 CFLAGS := -g
 CFLAGS-Windows := -masm=intel

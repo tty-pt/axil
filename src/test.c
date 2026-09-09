@@ -72,6 +72,11 @@ main(void)
 	expect_sym_fn("axil_exec", (void (*)(void)) axil_exec);
 	expect_sym_data("axil_execbuf", axil_execbuf);
 
+	expect_sym_fn("axil_respond_defer", (void (*)(void)) axil_respond_defer);
+	expect_sym_fn("axil_respond_defer_finish", (void (*)(void)) axil_respond_defer_finish);
+	expect_sym_fn("axil_respond_defer_done", (void (*)(void)) axil_respond_defer_done);
+	expect_sym_fn("axil_respond_defer_abort", (void (*)(void)) axil_respond_defer_abort);
+
 #if defined(_WIN32) || defined(__APPLE__)
 	expect_weak("axil_update", 1);
 	expect_weak("axil_vim", 1);

@@ -58,6 +58,8 @@ enum descr_flags {
 	DF_EXTERN = 512,
 	/** Request is HEAD: suppress response body. */
 	DF_HEAD = 1024,
+	/** Response deferred: headers sent, body pending axil_respond_defer_finish/done. */
+	DF_DEFERRED = 2048,
 };
 
 /** Server configuration flags. */
@@ -267,6 +269,21 @@ int axil_param(socket_t fd, const char *name, char *buf, size_t buf_len);
  *  if missing or unparseable. */
 int axil_param_int(socket_t fd, const char *name, int default_val);
 
+/** Look up a boolean parameter by name via axil_param(), returning default_val
+ *  if missing or unparseable. Recognizes 1/true/on/yes and 0/false/off/no. */
+int axil_param_bool(socket_t fd, const char *name, int default_val);
+
+/** Unified request parameter lookup: extracts from parsed query/form params,
+ *  non-destructively parses non-multipart body on-demand if provided, checks QUERY_STRING,
+ *  and falls back to route pattern parameters. Returns bytes written, or -1 if not found. */
+int axil_req_param(socket_t fd, const char *body, const char *name, char *buf, size_t buf_len);
+
+/** Unified request integer parameter lookup with fallback default. */
+int axil_req_param_int(socket_t fd, const char *body, const char *name, int default_val);
+
+/** Unified request boolean parameter lookup with fallback default. */
+int axil_req_param_bool(socket_t fd, const char *body, const char *name, int default_val);
+
 /** Get HTTP status text for a status code. Returns "Unknown" for invalid codes. */
 const char *axil_status_text(int code);
 
@@ -334,9 +351,27 @@ void axil_header_set(socket_t fd, const char *key, const char *value);
 int axil_header_get(socket_t fd, const char *key, char *buf, size_t buf_len);
 
 /** Send HTTP status, accumulated headers, body and close the connection.
- *  If body is NULL, only the status line and headers are sent and the
- *  connection is left open for streaming via axil_write(). */
+ *  The connection is ALWAYS closed (even with body == NULL). For a response
+ *  completed later from the event loop, use axil_respond_defer() instead. */
 void axil_respond(socket_t fd, int code, const char *body);
+
+/** Defer a response: send status line + accumulated headers now and keep the
+ *  connection open for a later axil_respond_defer_finish()/done()/abort().
+ *  Loop-thread only. Returns a handle, or NULL on invalid fd / already
+ *  deferred / WebSocket connection. */
+void *axil_respond_defer(socket_t fd, int code);
+
+/** Loop-thread only: complete a deferred response by writing `body` and
+ *  closing the connection. No-op if the handle is stale (closed/reused fd). */
+void axil_respond_defer_finish(void *handle, const char *body);
+
+/** Loop-thread only: close a deferred connection WITHOUT a body (end of a
+ *  streamed response already written via axil_write). No-op if stale. */
+void axil_respond_defer_done(void *handle);
+
+/** Loop-thread only: abandon/abort a deferred response and close the socket
+ *  (worker failed, client gone). No-op if stale. */
+void axil_respond_defer_abort(void *handle);
 
 /** Send a plain-text response and close the connection.
  *  Returns 0 on 2xx status codes, 1 otherwise. */
@@ -357,6 +392,21 @@ axil_respond_json(socket_t fd, int status, const char *json)
 	axil_header_set(fd, "Cache-Control", "no-store, no-cache, must-revalidate");
 	axil_respond(fd, status, json ? json : "{}");
 	return status / 100 != 2;
+}
+
+/** Send a 204 No Content response and close the connection. Returns 0. */
+static inline int
+axil_respond_no_content(socket_t fd)
+{
+	axil_respond(fd, 204, "");
+	return 0;
+}
+
+/** Send a 200 OK JSON response {"ok":true} and close the connection. Returns 0. */
+static inline int
+axil_respond_json_ok(socket_t fd)
+{
+	return axil_respond_json(fd, 200, "{\"ok\":true}");
 }
 
 /** Send a 303 redirect and close the connection. Returns 0. */

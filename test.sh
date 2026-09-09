@@ -4,6 +4,7 @@ testbin=./bin/test
 axil=./bin/axil
 testauth=./bin/test-auth
 testroutes=./bin/test-routes
+testdefer=./bin/test-defer
 
 case "$(uname -s)" in
 	Darwin)
@@ -275,6 +276,91 @@ else
 fi
 
 kill "$route_pid" >/dev/null 2>&1 || true
+
+defer_dir=$(mktemp -d)
+defer_status="$defer_dir/ready"
+defer_port=$((port + 25))
+$testdefer -p "$defer_port" -s "$defer_status" >/dev/null 2>&1 &
+defer_pid=$!
+
+if wait_for_port_tcp "$defer_port"; then
+	if command -v curl >/dev/null 2>&1; then
+		# defer -> finish delivers the deferred body
+		rm -f "$defer_status"
+		curl -sS --max-time 10 -o "$defer_dir/a.txt" "http://127.0.0.1:$defer_port/defer" &
+		curl_pid=$!
+		tries=50
+		while [ $tries -gt 0 ]; do
+			[ -f "$defer_status" ] && break
+			tries=$((tries - 1))
+			sleep 0.1
+		done
+		[ -f "$defer_status" ] || { echo "defer never became ready" >&2; exit 1; }
+		fin=$(curl -sS --max-time 5 "http://127.0.0.1:$defer_port/finish")
+		[ "$fin" = "finished-ok" ] || { echo "finish route reply wrong: $fin" >&2; exit 1; }
+		wait "$curl_pid" >/dev/null 2>&1 || true
+		grep -F "deferred-ok" "$defer_dir/a.txt" >/dev/null 2>&1 ||
+			{ echo "deferred body missing after finish" >&2; exit 1; }
+
+		# defer -> abort closes without a body
+		rm -f "$defer_status" "$defer_dir/b.txt"
+		curl -sS --max-time 10 -o "$defer_dir/b.txt" "http://127.0.0.1:$defer_port/defer" &
+		curl_pid=$!
+		tries=50
+		while [ $tries -gt 0 ]; do
+			[ -f "$defer_status" ] && break
+			tries=$((tries - 1))
+			sleep 0.1
+		done
+		[ -f "$defer_status" ] || { echo "defer never became ready (abort)" >&2; exit 1; }
+		curl -sS --max-time 5 "http://127.0.0.1:$defer_port/abort" >/dev/null
+		wait "$curl_pid" >/dev/null 2>&1 || true
+		[ ! -s "$defer_dir/b.txt" ] ||
+			{ echo "aborted deferred request got a body" >&2; exit 1; }
+
+		# client disconnect before finish must leave the server safe
+		rm -f "$defer_status"
+		curl -sS --max-time 1 -o /dev/null "http://127.0.0.1:$defer_port/defer" 2>/dev/null &
+		curl_pid=$!
+		tries=50
+		while [ $tries -gt 0 ]; do
+			[ -f "$defer_status" ] && break
+			tries=$((tries - 1))
+			sleep 0.1
+		done
+		[ -f "$defer_status" ] || { echo "defer never became ready (stale)" >&2; exit 1; }
+		wait "$curl_pid" >/dev/null 2>&1 || true
+		sleep 1
+		fin=$(curl -sS --max-time 5 "http://127.0.0.1:$defer_port/finish")
+		[ "$fin" = "finished-ok" ] || { echo "finish after stale handle wrong: $fin" >&2; exit 1; }
+		assert_contains defer-stale-alive "pong" fetch_body "$defer_port" "/ping"
+
+		# double-finish idempotency
+		rm -f "$defer_status" "$defer_dir/c.txt"
+		curl -sS --max-time 10 -o "$defer_dir/c.txt" "http://127.0.0.1:$defer_port/defer" &
+		curl_pid=$!
+		tries=50
+		while [ $tries -gt 0 ]; do
+			[ -f "$defer_status" ] && break
+			tries=$((tries - 1))
+			sleep 0.1
+		done
+		[ -f "$defer_status" ] || { echo "defer never became ready (double)" >&2; exit 1; }
+		curl -sS --max-time 5 "http://127.0.0.1:$defer_port/double" >/dev/null
+		wait "$curl_pid" >/dev/null 2>&1 || true
+		grep -F "deferred-ok" "$defer_dir/c.txt" >/dev/null 2>&1 ||
+			{ echo "double-finish lost first body" >&2; exit 1; }
+		assert_contains defer-double-alive "pong" fetch_body "$defer_port" "/ping"
+	else
+		echo "Skipping defer HTTP checks: curl not found" >&2
+	fi
+else
+	echo "test-defer failed to listen on $defer_port" >&2
+	kill "$defer_pid" >/dev/null 2>&1 || true
+	exit 1
+fi
+
+kill "$defer_pid" >/dev/null 2>&1 || true
 
 static_dir=$(mktemp -d)
 mkdir -p "$static_dir/public"

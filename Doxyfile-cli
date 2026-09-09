@@ -1,4 +1,4 @@
-PROJECT_NAME           = "ndc"
+PROJECT_NAME           = "axil"
 OUTPUT_LANGUAGE        = English
 OPTIMIZE_OUTPUT_FOR_C  = YES
 EXTRACT_ALL            = NO
@@ -6,7 +6,7 @@ HIDE_UNDOC_MEMBERS     = YES
 HIDE_UNDOC_CLASSES     = YES
 RECURSIVE              = NO
 
-INPUT                  = src/ndc.c
+INPUT                  = src/axil.c
 FILE_PATTERNS          = *.c
 
 GENERATE_MAN           = YES
