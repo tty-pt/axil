@@ -72,7 +72,7 @@
 #include <dirent.h>
 #include "../include/ws.h"
 
-#include <ttypt/qmap.h>
+#include <ttypt/corm.h>
 #include <ttypt/qsys.h>
 
 #include "ws.c"
@@ -211,7 +211,7 @@ void axil_env_clear(socket_t fd)
 {
 	struct descr *d = &descr_map[fd];
 	if (d->env_hd)
-		qmap_drop(d->env_hd);
+		corm_drop(d->env_hd);
 
 	d->resp_headers[0] = '\0';
 }
@@ -244,7 +244,7 @@ int axil_header_get(socket_t fd, const char *key, char *buf, size_t buf_len)
 	env_key[prefix_len + i] = '\0';
 
 	struct descr *d = &descr_map[fd];
-	const char *val = (const char *)qmap_get(d->env_hd, env_key);
+	const char *val = (const char *)corm_get(d->env_hd, env_key);
 	if (!val)
 		return -1;
 
@@ -428,7 +428,7 @@ void axil_close(socket_t fd)
 
 	if (d->env_hd) {
 		axil_env_clear(fd);
-		qmap_close(d->env_hd);
+		corm_close(d->env_hd);
 		d->env_hd = 0;
 	}
 
@@ -681,7 +681,7 @@ int axil_env_put(socket_t fd, char *key, char *value)
 	if (!value)
 		return 1;
 	struct descr *d = &descr_map[fd];
-	qmap_put(d->env_hd, key, value);
+	corm_put(d->env_hd, key, value);
 	return 0;
 }
 
@@ -723,7 +723,7 @@ static void descr_new(int ssl)
 		return;
 	}
 	d->epid = 0;
-	d->env_hd = qmap_open(NULL, NULL, QM_STR, QM_STR, ENV_MASK, 0);
+	d->env_hd = corm_open(NULL, NULL, CM_STR, CM_STR, ENV_MASK, 0);
 	d->pty = -1;
 
 	dio->write = axil_low_write;
@@ -766,7 +766,7 @@ static void axil_upstream_descr_init(socket_t fd)
 		return;
 	}
 	d->epid = 0;
-	d->env_hd = qmap_open(NULL, NULL, QM_STR, QM_STR, ENV_MASK, 0);
+	d->env_hd = corm_open(NULL, NULL, CM_STR, CM_STR, ENV_MASK, 0);
 	d->pty = -1;
 
 	dio->read = dio->lower_read = (io_t)recv;
@@ -864,7 +864,7 @@ static inline void cmd_proc(socket_t fd, int argc, char *argv[])
 	int found = 0;
 
 	*s = '\0';
-	const struct cmd_slot *cmd = qmap_get(cmds_hd, argv[0]);
+	const struct cmd_slot *cmd = corm_get(cmds_hd, argv[0]);
 
 	if (cmd != NULL)
 		found = 1;
@@ -999,7 +999,7 @@ static void axil_raw_descr_reset(socket_t fd)
 
 	if (d->env_hd) {
 		axil_env_clear(fd);
-		qmap_close(d->env_hd);
+		corm_close(d->env_hd);
 		d->env_hd = 0;
 	}
 
@@ -1197,7 +1197,7 @@ static int axil_sni(SSL *ssl, int *ad UNUSED, void *arg UNUSED)
 	if (!servername)
 		return SSL_TLSEXT_ERR_NOACK; // no SNI
 
-	const cert_t *cert = qmap_get(cert_hd, servername);
+	const cert_t *cert = corm_get(cert_hd, servername);
 
 	if (cert == NULL)
 		return SSL_TLSEXT_ERR_NOACK;
@@ -1288,12 +1288,12 @@ static int openssl_error_callback(const char *str, size_t len, void *u)
 void axil_register(char *name, axil_cb_t *cb, int flags)
 {
 	struct cmd_slot cmd = { .name = name, .cb = cb, .flags = flags };
-	qmap_put(cmds_hd, name, &cmd);
+	corm_put(cmds_hd, name, &cmd);
 }
 
 static inline void mime_put(char *key, char *value)
 {
-	qmap_put(mime_hd, key, value);
+	corm_put(mime_hd, key, value);
 }
 
 #ifdef __APPLE__
@@ -1313,7 +1313,7 @@ static void axil_init(void)
 		SSL_library_init();
 		OpenSSL_add_all_algorithms();
 
-		const cert_t *cert = qmap_get(cert_hd, domain_default);
+		const cert_t *cert = corm_get(cert_hd, domain_default);
 
 		default_ssl_ctx = axil_ctx_new(cert->crt, cert->key);
 
@@ -1550,7 +1550,7 @@ static char *env_sane(char *str)
 int axil_env_get(socket_t fd, char *target, size_t dest_len, char *key)
 {
 	struct descr *d = &descr_map[fd];
-	const void *skey = qmap_get(d->env_hd, key);
+	const void *skey = corm_get(d->env_hd, key);
 
 	if (!skey)
 		return 1;
@@ -1564,7 +1564,7 @@ int axil_query_parse(char *body)
 	if (!query_db)
 		return -1;
 
-	qmap_drop(query_db);
+	corm_drop(query_db);
 
 	if (!body || !*body)
 		return 0;
@@ -1603,7 +1603,7 @@ int axil_query_parse(char *body)
 					}
 				}
 				decoded[j] = '\0';
-				qmap_put(query_db, key, decoded);
+				corm_put(query_db, key, decoded);
 				free(decoded);
 			}
 		}
@@ -1621,7 +1621,7 @@ int axil_query_param(const char *name, char *buf, size_t buf_len)
 
 	buf[0] = '\0';
 
-	const char *val = (const char *)qmap_get(query_db, name);
+	const char *val = (const char *)corm_get(query_db, name);
 	if (!val)
 		return -1;
 
@@ -2081,7 +2081,7 @@ request_handle_static(socket_t fd, char *document_uri, struct stat *stat_buf)
 
 	content_type = "application/octet-stream";
 	if (ext) {
-		const void *skey = qmap_get(mime_hd, ext);
+		const void *skey = corm_get(mime_hd, ext);
 		if (skey)
 			content_type = skey;
 	}
@@ -2365,7 +2365,7 @@ static axil_handler_t *axil_match_pattern(
         const char *path_with_method, const char *document_uri, socket_t fd)
 {
 	/* Iterate through all registered handlers */
-	uint32_t cur = qmap_iter(hdlr_hd, NULL, 0);
+	uint32_t cur = corm_iter(hdlr_hd, NULL, 0);
 	const void *pattern_key;
 	const void *handler_ptr;
 	axil_handler_t *best_handler = NULL;
@@ -2373,7 +2373,7 @@ static axil_handler_t *axil_match_pattern(
 
 	memset(&best_match, 0, sizeof(best_match));
 
-	while (qmap_next(&pattern_key, &handler_ptr, cur)) {
+	while (corm_next(&pattern_key, &handler_ptr, cur)) {
 		const char *pattern = (const char *)pattern_key;
 		axil_pattern_match_t candidate;
 		int matched = 0;
@@ -2395,7 +2395,7 @@ static axil_handler_t *axil_match_pattern(
 		}
 	}
 
-	qmap_fin(cur);
+	corm_fin(cur);
 
 	if (!best_handler)
 		return NULL;
@@ -2564,9 +2564,9 @@ static void request_handle(socket_t fd, int argc, char *argv[], int req_flags)
 	snprintf(
 	        path_with_method, sizeof(path_with_method), "%s:%s", method,
 	        document_uri);
-	const void *ws_key = qmap_get(ws_hd, path_with_method);
+	const void *ws_key = corm_get(ws_hd, path_with_method);
 	if (!ws_key)
-		ws_key = qmap_get(ws_hd, document_uri);
+		ws_key = corm_get(ws_hd, document_uri);
 
 	axil_ws_upstream_t *ws_handler = NULL;
 	if (ws_key) {
@@ -2662,14 +2662,14 @@ static void request_handle(socket_t fd, int argc, char *argv[], int req_flags)
 		return;
 
 	/* Try HTTP handler match */
-	const void *key = qmap_get(hdlr_hd, path_with_method);
+	const void *key = corm_get(hdlr_hd, path_with_method);
 	if (!key && (req_flags & AXIL_HEAD)) {
 		char get_path[16384];
 		snprintf(get_path, sizeof(get_path), "GET:%s", document_uri);
-		key = qmap_get(hdlr_hd, get_path);
+		key = corm_get(hdlr_hd, get_path);
 	}
 	if (!key)
-		key = qmap_get(hdlr_hd, document_uri);
+		key = corm_get(hdlr_hd, document_uri);
 
 	axil_handler_t *hdlr = NULL;
 	if (key) {
@@ -2704,7 +2704,7 @@ static void request_handle(socket_t fd, int argc, char *argv[], int req_flags)
 
 void axil_register_handler(char *path, axil_handler_t handler)
 {
-	qmap_put(hdlr_hd, path, &handler);
+	corm_put(hdlr_hd, path, &handler);
 }
 
 int axil_register_fallback_handler(axil_handler_t handler)
@@ -2718,7 +2718,7 @@ int axil_register_fallback_handler(axil_handler_t handler)
 
 void axil_ws_handler(char *path, axil_ws_upstream_t handler)
 {
-	qmap_put(ws_hd, path, &handler);
+	corm_put(ws_hd, path, &handler);
 }
 
 int axil_ws_upgrade(socket_t fd)
@@ -2797,31 +2797,31 @@ static void axil_ws_tunnel(socket_t a, socket_t b)
 void do_GET(socket_t fd, int argc, char *argv[])
 {
 	request_handle(fd, argc, argv, 0);
-	qmap_drop(query_db);
+	corm_drop(query_db);
 }
 
 void do_HEAD(socket_t fd, int argc, char *argv[])
 {
 	request_handle(fd, argc, argv, AXIL_HEAD);
-	qmap_drop(query_db);
+	corm_drop(query_db);
 }
 
 void do_POST(socket_t fd, int argc, char *argv[])
 {
 	request_handle(fd, argc, argv, AXIL_POST);
-	qmap_drop(query_db);
+	corm_drop(query_db);
 }
 
 void do_PUT(socket_t fd, int argc, char *argv[])
 {
 	request_handle(fd, argc, argv, AXIL_PUT);
-	qmap_drop(query_db);
+	corm_drop(query_db);
 }
 
 void do_DELETE(socket_t fd, int argc, char *argv[])
 {
 	request_handle(fd, argc, argv, AXIL_DELETE);
-	qmap_drop(query_db);
+	corm_drop(query_db);
 }
 
 int axil_flags(socket_t fd)
@@ -2876,17 +2876,17 @@ __attribute__((constructor)) static void axil_pre_init(void)
 	for (int i = 0; i < FD_SETSIZE; i++)
 		tunnel_pair[i] = INVALID_SOCKET;
 
-	unsigned cert_type = qmap_reg(sizeof(cert_t));
-	unsigned cmd_type = qmap_reg(sizeof(struct cmd_slot));
-	unsigned hdlr_type = qmap_reg(sizeof(axil_handler_t *));
-	unsigned ws_type = qmap_reg(sizeof(axil_ws_upstream_t *));
+	unsigned cert_type = corm_reg(sizeof(cert_t));
+	unsigned cmd_type = corm_reg(sizeof(struct cmd_slot));
+	unsigned hdlr_type = corm_reg(sizeof(axil_handler_t *));
+	unsigned ws_type = corm_reg(sizeof(axil_ws_upstream_t *));
 
-	query_db = qmap_open(NULL, NULL, QM_STR, QM_STR, 0xFF, 0);
-	mime_hd = qmap_open(NULL, NULL, QM_STR, QM_STR, MIME_MASK, 0);
-	cert_hd = qmap_open(NULL, NULL, QM_STR, cert_type, CERT_MASK, 0);
-	hdlr_hd = qmap_open(NULL, NULL, QM_STR, hdlr_type, HDLR_MASK, 0);
-	ws_hd = qmap_open(NULL, NULL, QM_STR, ws_type, HDLR_MASK, 0);
-	cmds_hd = qmap_open(NULL, NULL, QM_STR, cmd_type, CMD_MASK, 0);
+	query_db = corm_open(NULL, NULL, CM_STR, CM_STR, 0xFF, 0);
+	mime_hd = corm_open(NULL, NULL, CM_STR, CM_STR, MIME_MASK, 0);
+	cert_hd = corm_open(NULL, NULL, CM_STR, cert_type, CERT_MASK, 0);
+	hdlr_hd = corm_open(NULL, NULL, CM_STR, hdlr_type, HDLR_MASK, 0);
+	ws_hd = corm_open(NULL, NULL, CM_STR, ws_type, HDLR_MASK, 0);
+	cmds_hd = corm_open(NULL, NULL, CM_STR, cmd_type, CMD_MASK, 0);
 
 	/* Register default HTTP command handlers */
 	/* These need to be in the library, not just the axil binary */
@@ -2923,7 +2923,7 @@ int axil_respond_file(socket_t fd, const char *path, const char *allowed_exts)
 	ext++; /* skip '.' */
 
 	if (mime_hd) {
-		const void *val = qmap_get(mime_hd, ext);
+		const void *val = corm_get(mime_hd, ext);
 		if (val)
 			mime = (const char *)val;
 	}
@@ -2992,7 +2992,7 @@ void _axil_cert_add(char *domain, char *crt, char *key)
 		.ctx = ssl_ctx,
 	};
 
-	unsigned id = qmap_put(cert_hd, domain, &cert);
+	unsigned id = corm_put(cert_hd, domain, &cert);
 	WARN("%u '%s' '%s' '%s'\n", id, domain, crt, key);
 	if (!domain_default)
 		domain_default = domain;

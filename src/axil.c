@@ -4,7 +4,7 @@
 #include <signal.h>
 
 #include <ttypt/qsys.h>
-#include <ttypt/qmap.h>
+#include <ttypt/corm.h>
 #include <ttypt/xy.h>
 
 struct xy_ctx xy;

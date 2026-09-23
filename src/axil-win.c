@@ -4,7 +4,7 @@
 #include <fcntl.h>
 #include <io.h>
 #include <sys/stat.h>
-#include <ttypt/qmap.h>
+#include <ttypt/corm.h>
 
 extern unsigned mime_hd;
 
@@ -25,7 +25,7 @@ axil_sendfile(socket_t fd, const char *path)
 	}
 
 	char *ext = strrchr(path, '.');
-	const char *mime = ext ? (const char *)qmap_get(mime_hd, ext + 1) : NULL;
+	const char *mime = ext ? (const char *)corm_get(mime_hd, ext + 1) : NULL;
 	if (!mime)
 		mime = "application/octet-stream";
 

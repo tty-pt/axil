@@ -51,7 +51,7 @@ int initgroups(const char *, gid_t); /* OpenBSD uses gid_t */
 #endif
 
 #include "../include/ttypt/qsys.h"
-#include "../include/ttypt/qmap.h"
+#include "../include/ttypt/corm.h"
 
 static char *statics_mmap;
 static size_t statics_len = 0;
@@ -76,8 +76,8 @@ static char **axil_env_prep(socket_t fd)
 	size_t count = 0;
 	const void *key, *value;
 
-	cur = qmap_iter(d->env_hd, NULL, 0);
-	while (qmap_next(&key, &value, cur)) {
+	cur = corm_iter(d->env_hd, NULL, 0);
+	while (corm_next(&key, &value, cur)) {
 		char *envstr = malloc(ENV_LEN);
 		env[count++] = envstr;
 		snprintf(envstr, ENV_LEN, "%s=%s", (char *)key, (char *)value);
@@ -648,7 +648,7 @@ void axil_sendfile(socket_t fd, const char *path)
 
 	char *ext = strrchr(path, '.');
 	const char *mime =
-	        ext ? (const char *)qmap_get(mime_hd, ext + 1) : NULL;
+	        ext ? (const char *)corm_get(mime_hd, ext + 1) : NULL;
 	if (!mime)
 		mime = "application/octet-stream";
 

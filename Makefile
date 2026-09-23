@@ -3,7 +3,7 @@ INSTALL_BIN := axil
 
 LDLIBS-libaxil-Linux := -lrt
 LDLIBS-libaxil-OpenBSD := -liconv
-LDLIBS-libaxil := -lqmap -lqsys -lcrypto -lssl -lxylem
+LDLIBS-libaxil := -lcorm -lqsys -lcrypto -lssl -lxylem
 LDFLAGS-libaxil-Darwin := -undefined dynamic_lookup
 LDLIBS-libaxil-Linux := -lc
 LDLIBS-libaxil-Windows := -lws2_32 -liconv
