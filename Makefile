@@ -32,11 +32,6 @@ libaxil-obj-y := src/axil-status.o src/axil-encode.o
 
 -include ../mk/include.mk
 
-docs: docs-cli
-
-docs-cli:
-	doxygen Doxyfile-cli
-
 test: all
 	sh ./test.sh
 

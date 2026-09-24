@@ -1,10 +1,10 @@
-Usage: ./bin/axil [-Adr?] [-C PATH] [-u USER] [-k PATH] [-c PATH] [-p PORT] [-B BYTES] [-m MODS]
+Usage: ./bin/axil [-Adr?] [-C PATH] [-k CERT] [-K PATH] [-p PORT] [-s PORT] [-B BYTES] [-m MODS]
     Options:
-        -C PATH   changes directory to PATH before starting up.
-        -u USER   login as USER before starting up.
-        -k PATH   specify SSL certificate 'key' file
-        -c PATH   specify SSL certificate 'crt' file
-        -p PORT   specify server port
+        -p PORT   specify HTTP server port
+        -s PORT   specify HTTPS server port (POSIX)
+        -C PATH   change directory to PATH before starting up
+        -K PATH   load SSL certificate mappings from file (POSIX)
+        -k CERT   add single SSL certificate mapping domain:cert:key
         -B BYTES  maximum POST body size in bytes (default: 10485760)
         -m MODS   colon-separated list of module paths to load
         -A        auto-authenticate all WebSocket connections

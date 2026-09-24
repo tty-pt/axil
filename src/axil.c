@@ -1,3 +1,96 @@
+/**
+ * @page axil axil(1)
+ * @brief axil command-line tool — HTTP(S) + WebSocket(S) server daemon.
+ *
+ * ## Overview
+ *
+ * `axil` runs the axil server: an HTTP/WebSocket daemon with ordered Xylem
+ * module loading, TLS certificate mappings, authentication and PTY/environment
+ * handling. It daemonizes into the background by default; pass `-d` to stay in
+ * the foreground. `axil -?` prints the option synopsis.
+ *
+ * ## Usage
+ *
+ * ```
+ * axil [-Adr?] [-C PATH] [-k CERT] [-K PATH] [-p PORT] [-s PORT] [-B BYTES] [-m MODS]
+ * ```
+ *
+ * ## Options
+ *
+ *  - `-p PORT`    HTTP listen port (`axil_config.port`).
+ *  - `-s PORT`    HTTPS listen port (POSIX; `axil_config.ssl_port`, used when
+ *                 TLS is active).
+ *  - `-C PATH`    change (chdir) to PATH before starting up
+ *                 (`axil_config.chroot`).
+ *  - `-K PATH`    load SSL certificate mappings from file (POSIX); one
+ *                 `domain:cert:key` entry per line.
+ *  - `-k CERT`    add a single SSL certificate mapping `domain:cert:key`.
+ *  - `-B BYTES`   maximum POST body size in bytes (default: 10485760).
+ *  - `-m MODS`    colon-separated list of module paths to load (see
+ *                 **Modules** below).
+ *  - `-A`         auto-authenticate all WebSocket connections
+ *                 (development/testing; authenticates as the current user).
+ *  - `-d`         don't detach (run in the foreground).
+ *  - `-r`         root multiplex mode (`axil_config.flags |= AXIL_ROOT`).
+ *  - `-?`         display this message.
+ *
+ * ## Modules
+ *
+ * `-m MODS` loads dynamic modules through the libxylem module system
+ * (`xy_load`). Each module may register HTTP/WS handlers, commands and
+ * `on_axil_*` hooks (see <ttypt/axil-xy.h>). Multiple modules are
+ * colon-separated in a single `-m` value:
+ *
+ * ```
+ * axil -d -p 8888 -m /path/to/libaxil-tty.so:/path/to/libaxil-cgi.so
+ * ```
+ *
+ * Repeated `-m` flags are **not** additive — only the last value is used.
+ * Sibling modules: `libaxil-tty` (browser terminal / WebSocket PTY support,
+ * provides `axil_pty()`) and `libaxil-cgi` (CGI fallback for executable
+ * `./index.sh`).
+ *
+ * ## TLS
+ *
+ * `-k CERT` and `-K PATH` accept `domain:cert:key` certificate mappings; `-s
+ * PORT` sets the HTTPS port. A certificates file loaded with `-K` holds one
+ * mapping per line:
+ *
+ * ```
+ * example.com:cert.pem:key.pem
+ * ```
+ *
+ * ## Authentication
+ *
+ * WebSocket connections authenticate by default: `axil_auth_check` resolves
+ * the `QSESSION=<token>` cookie to a user. `-A` bypasses this for
+ * development/testing, authenticating every connection as the current user.
+ *
+ * ## Examples
+ *
+ * ```
+ * axil -d -p 8888                                  # foreground HTTP server
+ * axil -p 80                                       # daemonized HTTP server
+ * sudo axil -C /var/www -K certs.txt -d           # HTTPS from cert file
+ * axil -d -p 8080 -k example.com:cert.pem:key.pem # single TLS mapping
+ * axil -A -d -p 4242 -m libaxil-qllm              # auto-auth WS + module
+ * ```
+ *
+ * ## Notes
+ *
+ * - POSIX vs Windows: TLS, privilege handling, process execution and fd
+ *   watching are POSIX-only; Windows builds handle HTTP/WS only.
+ * - Responses are served with cross-origin isolation headers
+ *   (COOP/COEP/CORP); static `.wasm` files are served as `application/wasm`.
+ * - The binary defaults to daemon mode (`AXIL_DETACH`); `-d` keeps it in the
+ *   foreground (useful under a supervisor such as `start.sh`).
+ *
+ * @see axil_main
+ * @see axil_auth
+ * @see axil_ws_handler
+ * @see axil_config
+ * @see axil_register
+ */
 #include "./../include/ttypt/axil.h"
 
 #include <unistd.h>
@@ -48,13 +141,13 @@ void exit_all(int i) {
 
 void
 usage(char *prog) {
-	fprintf(stderr, "Usage: %s [-Adr?] [-C PATH] [-u USER] [-k PATH] [-c PATH] [-p PORT] [-B BYTES] [-m MODS]\n", prog);
+	fprintf(stderr, "Usage: %s [-Adr?] [-C PATH] [-k CERT] [-K PATH] [-p PORT] [-s PORT] [-B BYTES] [-m MODS]\n", prog);
 	fprintf(stderr, "    Options:\n");
-	fprintf(stderr, "        -C PATH   changes directory to PATH before starting up.\n");
-	fprintf(stderr, "        -u USER   login as USER before starting up.\n");
-	fprintf(stderr, "        -k PATH   specify SSL certificate 'key' file\n");
-	fprintf(stderr, "        -c PATH   specify SSL certificate 'crt' file\n");
-	fprintf(stderr, "        -p PORT   specify server port\n");
+	fprintf(stderr, "        -p PORT   specify HTTP server port\n");
+	fprintf(stderr, "        -s PORT   specify HTTPS server port (POSIX)\n");
+	fprintf(stderr, "        -C PATH   change directory to PATH before starting up\n");
+	fprintf(stderr, "        -K PATH   load SSL certificate mappings from file (POSIX)\n");
+	fprintf(stderr, "        -k CERT   add single SSL certificate mapping domain:cert:key\n");
 	fprintf(stderr, "        -B BYTES  maximum POST body size in bytes (default: 10485760)\n");
 	fprintf(stderr, "        -m MODS   colon-separated list of module paths to load\n");
 	fprintf(stderr, "        -A        auto-authenticate all WebSocket connections\n");
