@@ -1,7 +1,4 @@
 @INCLUDE = ../mk/Doxyfile
-PROJECT_NAME           = "ndc"
-MAN_EXTENSION          = 3
-MAN_LINKS              = YES
-SEPARATE_MEMBER_PAGES  = YES
-SHOW_FILES             = NO
+PROJECT_NAME           = "axil"
+INPUT                  = include/ include/ttypt/
 EXCLUDE                = src/libndc.c src/ws.c

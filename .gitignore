@@ -1,4 +1,5 @@
 *.o
+*.d
 /lib
 /bin
 /ndc

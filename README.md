@@ -1,9 +1,33 @@
 # axil
+
+[![C99](https://img.shields.io/badge/C-C99-555?logo=c)](#)
+[![BSD-2-Clause](https://img.shields.io/badge/License-BSD--2--Clause-blue)](#)
+[![HTTP(S)+WS daemon](https://img.shields.io/badge/HTTP%28S%29%2BWS-daemon-4B8BBE)](#)
+
 > HTTP(S) + WS(S) + extensible network daemon library
 
 A cross-platform C library for building network daemons - HTTP servers, WebSocket servers, telnet-like services, or custom network applications.
 
 From <a href="https://github.com/tty-pt/axileverdark">NeverDark</a> • Powers [tty.pt](https://tty.pt)
+
+## Contents
+
+- [What is axil?](#what-is-axil)
+- [Platform Support](#platform-support)
+- [Install](#install)
+- [Build from source](#build-from-source)
+- [Quickstart](#quickstart)
+- [Building Custom Daemons](#building-custom-daemons)
+- [Library API](#library-api)
+- [Typedefs](#typedefs)
+- [Macros](#macros)
+- [Global Symbols](#global-symbols)
+- [POSIX vs Windows](#posix-vs-windows)
+- [Static Files (POSIX)](#static-files-posix)
+- [Modules](#modules)
+- [Documentation](#documentation)
+- [Testing](#testing)
+- [License](#license)
 
 ## What is axil?
 
@@ -19,7 +43,35 @@ Build telnet-like servers, custom protocol handlers, HTTP APIs, WebSocket apps, 
 | Linux, macOS, BSD | ✅ Full support |
 | Windows | ⚠️ HTTP/WS only (no PTY/privilege dropping) |
 
-## Quick Start
+## Install
+
+Prebuilt packages are distributed on tty.pt for Linux (APT / Alpine / Arch /
+Fedora-RHEL), macOS (Homebrew), Windows (winget / MSYS2), and OpenBSD.
+Follow the [installation instructions](
+https://github.com/tty-pt/ci/blob/main/docs/install.md) and use
+**axil** as the package name.
+
+## Build from source
+
+The library builds with a plain `make` (the shared [`mk` include.mk](
+https://github.com/tty-pt/mk)):
+
+```sh
+make                  # builds lib/libaxil.so + bin/axil
+make test             # run the in-tree test suite
+sudo make install     # lib + headers + axil.pc -> $(PREFIX), default /usr/local
+```
+
+Link it from your own C code:
+
+```sh
+cc my_app.c $(pkg-config --cflags --libs axil)
+```
+
+**Dependencies:** `libcorm`, `libqsys`, `libxylem`, OpenSSL
+(`-lcrypto -lssl`; POSIX TLS). Windows uses `ws2_32` and builds HTTP/WS only.
+
+## Quickstart
 
 ```sh
 # Run simple HTTP server
@@ -437,9 +489,22 @@ Sibling modules:
 Modules can register HTTP handlers, fallback handlers, commands, and `libxylem`
 hooks (see [XY Hooks](#xy-hooks) above).
 
-- Man pages: `man axil` and `man axil.3`
-- Full API: `include/ttypt/axil.h`
-- Examples: `src/test.c`, `src/test-auth.c`
+## Documentation
 
-**Installation**: See [install docs](https://github.com/tty-pt/ci/blob/main/docs/install.md)  
-**Entry points**: `src/axil.c` (native)
+- Man pages: `man axil` and `man axil.3`
+- Full API: [`include/ttypt/axil.h`](./include/ttypt/axil.h)
+- Examples: `src/test.c`, `src/test-auth.c`
+- Entry points: `src/axil.c` (native)
+
+## Testing
+
+```sh
+make && ./test.sh
+```
+
+Exercises the HTTP/WS/command/XY-hook surface started by `src/test.c` and
+`src/test-auth.c`.
+
+## License
+
+BSD 2-Clause License. Copyright (c) 2023, tty-pt. See `LICENSE`.

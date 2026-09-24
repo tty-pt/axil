@@ -55,6 +55,7 @@ main(void)
 	expect_sym_fn("axil_writef", (void (*)(void)) axil_writef);
 	expect_sym_fn("axil_wall", (void (*)(void)) axil_wall);
 	expect_sym_fn("do_GET", (void (*)(void)) do_GET);
+	expect_sym_fn("do_HEAD", (void (*)(void)) do_HEAD);
 	expect_sym_fn("do_POST", (void (*)(void)) do_POST);
 	expect_sym_fn("axil_flags", (void (*)(void)) axil_flags);
 	expect_sym_fn("axil_close", (void (*)(void)) axil_close);
@@ -70,6 +71,11 @@ main(void)
 	expect_sym_fn("axil_env_put", (void (*)(void)) axil_env_put);
 	expect_sym_fn("axil_exec", (void (*)(void)) axil_exec);
 	expect_sym_data("axil_execbuf", axil_execbuf);
+
+	expect_sym_fn("axil_respond_defer", (void (*)(void)) axil_respond_defer);
+	expect_sym_fn("axil_respond_defer_finish", (void (*)(void)) axil_respond_defer_finish);
+	expect_sym_fn("axil_respond_defer_done", (void (*)(void)) axil_respond_defer_done);
+	expect_sym_fn("axil_respond_defer_abort", (void (*)(void)) axil_respond_defer_abort);
 
 #if defined(_WIN32) || defined(__APPLE__)
 	expect_weak("axil_update", 1);

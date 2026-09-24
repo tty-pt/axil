@@ -1,6 +1,7 @@
 #include <ctype.h>
 #include <errno.h>
 #include <iconv.h>
+#include <locale.h>
 #include <stddef.h>
 #include <stdio.h>
 #include <string.h>
@@ -102,10 +103,28 @@ int axil_json_escape(const char *in, char *out, size_t outlen)
 	return 0;
 }
 
+static iconv_t slug_cd = (iconv_t)-1;
+static int slug_ready;
+
+static void slug_init(void)
+{
+	const char *lc;
+
+	if (slug_ready)
+		return;
+	slug_ready = 1;
+	lc = setlocale(LC_CTYPE, "");
+	if (!lc || !strstr(lc, "UTF-8")) {
+		if (!setlocale(LC_CTYPE, "C.UTF-8") &&
+		    !setlocale(LC_CTYPE, "en_US.UTF-8"))
+			setlocale(LC_CTYPE, "pt_PT.UTF-8");
+	}
+	slug_cd = iconv_open("ASCII//TRANSLIT", "UTF-8");
+}
+
 int axil_slugify(const char *title, size_t title_len,
                 char *result, size_t result_len)
 {
-	static iconv_t cd = (iconv_t)-1;
 	size_t written;
 	char *r_ptr = result;
 	char *w_ptr = result;
@@ -118,10 +137,9 @@ int axil_slugify(const char *title, size_t title_len,
 	if (!title || !result || result_len == 0)
 		return -1;
 
-	if (cd == (iconv_t)-1)
-		cd = iconv_open("ASCII//TRANSLIT", "UTF-8");
+	slug_init();
 
-	if (cd != (iconv_t)-1) {
+	if (slug_cd != (iconv_t)-1) {
 		in = (char *)title;
 		in_len = title_len;
 		out = result;
@@ -129,14 +147,14 @@ int axil_slugify(const char *title, size_t title_len,
 
 		while (in_len > 0 && out_len > 0) {
 			size_t res =
-			        iconv(cd, (void *)&in, &in_len, &out, &out_len);
+			        iconv(slug_cd, (void *)&in, &in_len, &out, &out_len);
 			if (res != (size_t)-1)
 				continue;
 			if (errno != EILSEQ && errno != EINVAL)
 				break;
 			in++;
 			in_len--;
-			iconv(cd, NULL, NULL, &out, &out_len);
+			iconv(slug_cd, NULL, NULL, &out, &out_len);
 		}
 		written = (size_t)(out - result);
 	} else {

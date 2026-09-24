@@ -25,7 +25,7 @@ route_song(socket_t fd, char *body)
 	char id[ENV_VALUE_LEN] = {0};
 
 	(void)body;
-	axil_env_get(fd, id, "PATTERN_PARAM_ID");
+	axil_env_get(fd, id, sizeof(id), "PATTERN_PARAM_ID");
 	return route_respond(fd, id);
 }
 
@@ -36,7 +36,7 @@ route_songbook_edit(socket_t fd, char *body)
 	char resp[ENV_VALUE_LEN + 16];
 
 	(void)body;
-	axil_env_get(fd, id, "PATTERN_PARAM_ID");
+	axil_env_get(fd, id, sizeof(id), "PATTERN_PARAM_ID");
 	snprintf(resp, sizeof(resp), "edit:%s", id);
 	return route_respond(fd, resp);
 }
@@ -55,7 +55,7 @@ route_chords(socket_t fd, char *body)
 	char resp[ENV_VALUE_LEN + 16];
 
 	(void)body;
-	axil_env_get(fd, id, "PATTERN_PARAM_ID");
+	axil_env_get(fd, id, sizeof(id), "PATTERN_PARAM_ID");
 	snprintf(resp, sizeof(resp), "chords:%s", id);
 	return route_respond(fd, resp);
 }
@@ -83,8 +83,9 @@ main(int argc, char *argv[])
 	axil_register_handler("GET:/sb/:id/edit", route_songbook_edit);
 	axil_register_handler("/chords/:id", route_chords);
 	axil_register("GET", do_GET, CF_NOAUTH | CF_NOTRIM);
-	axil_register("PRI", do_GET, CF_NOAUTH | CF_NOTRIM);
 	axil_register("POST", do_POST, CF_NOAUTH | CF_NOTRIM);
+	axil_register("PUT", do_PUT, CF_NOAUTH | CF_NOTRIM);
+	axil_register("DELETE", do_DELETE, CF_NOAUTH | CF_NOTRIM);
 
 #if defined(SIGPIPE)
 	signal(SIGPIPE, SIG_IGN);

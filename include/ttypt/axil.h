@@ -56,6 +56,10 @@ enum descr_flags {
 	DF_WS_PROXY_PENDING = 256,
 	/** Externally-watched fd: skip client processing, dispatch via on_fd_tick. */
 	DF_EXTERN = 512,
+	/** Request is HEAD: suppress response body. */
+	DF_HEAD = 1024,
+	/** Response deferred: headers sent, body pending axil_respond_defer_finish/done. */
+	DF_DEFERRED = 2048,
 };
 
 /** Server configuration flags. */
@@ -78,6 +82,12 @@ enum axil_srv_flags {
 enum axil_req_flags {
 	/** Request is POST. */
 	AXIL_POST = 1,
+	/** Request is PUT. */
+	AXIL_PUT = 2,
+	/** Request is DELETE. */
+	AXIL_DELETE = 4,
+	/** Request is HEAD. */
+	AXIL_HEAD = 8,
 };
 
 /** HTTP handler callback signature. */
@@ -207,7 +217,7 @@ int axil_writef(socket_t fd, const char *fmt, ...);
 /** Broadcast a message to all connected descriptors. */
 void axil_wall(const char *msg);
 
-axil_cb_t do_GET, do_POST;
+axil_cb_t do_GET, do_POST, do_PUT, do_DELETE, do_HEAD;
 
 /** Get descriptor flags. */
 int axil_flags(socket_t fd);
@@ -235,7 +245,7 @@ char *axil_mmap_iter(char *start, size_t *pos);
 /** Clear request environment for fd. */
 void axil_env_clear(socket_t fd);
 /** Get environment value by key; returns 0 on success. */
-int axil_env_get(socket_t fd, char *target, char *key);
+int axil_env_get(socket_t fd, char *target, size_t dest_len, char *key);
 /** Set environment key/value; returns 0 on success. */
 int axil_env_put(socket_t fd, char *key, char *value);
 
@@ -249,6 +259,30 @@ int axil_query_parse(char *body);
  *  URL-decoded value into buf (at most buf_len-1 bytes, NUL-terminated).
  *  Returns the number of bytes written, or -1 if the key was not found. */
 int axil_query_param(const char *name, char *buf, size_t buf_len);
+
+/** Look up a parameter by name from parsed query/form body, falling back
+ *  to route pattern parameters (PATTERN_PARAM_<NAME>). Returns bytes written,
+ *  or -1 if the parameter was not found. */
+int axil_param(socket_t fd, const char *name, char *buf, size_t buf_len);
+
+/** Look up an integer parameter by name via axil_param(), returning default_val
+ *  if missing or unparseable. */
+int axil_param_int(socket_t fd, const char *name, int default_val);
+
+/** Look up a boolean parameter by name via axil_param(), returning default_val
+ *  if missing or unparseable. Recognizes 1/true/on/yes and 0/false/off/no. */
+int axil_param_bool(socket_t fd, const char *name, int default_val);
+
+/** Unified request parameter lookup: extracts from parsed query/form params,
+ *  non-destructively parses non-multipart body on-demand if provided, checks QUERY_STRING,
+ *  and falls back to route pattern parameters. Returns bytes written, or -1 if not found. */
+int axil_req_param(socket_t fd, const char *body, const char *name, char *buf, size_t buf_len);
+
+/** Unified request integer parameter lookup with fallback default. */
+int axil_req_param_int(socket_t fd, const char *body, const char *name, int default_val);
+
+/** Unified request boolean parameter lookup with fallback default. */
+int axil_req_param_bool(socket_t fd, const char *body, const char *name, int default_val);
 
 /** Get HTTP status text for a status code. Returns "Unknown" for invalid codes. */
 const char *axil_status_text(int code);
@@ -317,9 +351,27 @@ void axil_header_set(socket_t fd, const char *key, const char *value);
 int axil_header_get(socket_t fd, const char *key, char *buf, size_t buf_len);
 
 /** Send HTTP status, accumulated headers, body and close the connection.
- *  If body is NULL, only the status line and headers are sent and the
- *  connection is left open for streaming via axil_write(). */
+ *  The connection is ALWAYS closed (even with body == NULL). For a response
+ *  completed later from the event loop, use axil_respond_defer() instead. */
 void axil_respond(socket_t fd, int code, const char *body);
+
+/** Defer a response: send status line + accumulated headers now and keep the
+ *  connection open for a later axil_respond_defer_finish()/done()/abort().
+ *  Loop-thread only. Returns a handle, or NULL on invalid fd / already
+ *  deferred / WebSocket connection. */
+void *axil_respond_defer(socket_t fd, int code);
+
+/** Loop-thread only: complete a deferred response by writing `body` and
+ *  closing the connection. No-op if the handle is stale (closed/reused fd). */
+void axil_respond_defer_finish(void *handle, const char *body);
+
+/** Loop-thread only: close a deferred connection WITHOUT a body (end of a
+ *  streamed response already written via axil_write). No-op if stale. */
+void axil_respond_defer_done(void *handle);
+
+/** Loop-thread only: abandon/abort a deferred response and close the socket
+ *  (worker failed, client gone). No-op if stale. */
+void axil_respond_defer_abort(void *handle);
 
 /** Send a plain-text response and close the connection.
  *  Returns 0 on 2xx status codes, 1 otherwise. */
@@ -331,6 +383,32 @@ axil_respond_plain(socket_t fd, int status, const char *msg)
 	return status / 100 != 2;
 }
 
+/** Send a JSON response and close the connection.
+ *  Returns 0 on 2xx status codes, 1 otherwise. */
+static inline int
+axil_respond_json(socket_t fd, int status, const char *json)
+{
+	axil_header_set(fd, "Content-Type", "application/json");
+	axil_header_set(fd, "Cache-Control", "no-store, no-cache, must-revalidate");
+	axil_respond(fd, status, json ? json : "{}");
+	return status / 100 != 2;
+}
+
+/** Send a 204 No Content response and close the connection. Returns 0. */
+static inline int
+axil_respond_no_content(socket_t fd)
+{
+	axil_respond(fd, 204, "");
+	return 0;
+}
+
+/** Send a 200 OK JSON response {"ok":true} and close the connection. Returns 0. */
+static inline int
+axil_respond_json_ok(socket_t fd)
+{
+	return axil_respond_json(fd, 200, "{\"ok\":true}");
+}
+
 /** Send a 303 redirect and close the connection. Returns 0. */
 static inline int
 axil_redirect(socket_t fd, const char *location)
@@ -339,6 +417,11 @@ axil_redirect(socket_t fd, const char *location)
 	axil_respond(fd, 303, "");
 	return 0;
 }
+
+/** Serve a file from disk with validation against allowlisted extensions.
+ *  Handles MIME type lookup, Content-Length, safe id checking, and streaming.
+ *  Returns 0 on success, -1 on failure (error response sent). */
+int axil_respond_file(socket_t fd, const char *path, const char *allowed_exts);
 
 /** Serve a static file with auto-detected MIME type. Closes fd on completion. */
 void axil_sendfile(socket_t fd, const char *path);

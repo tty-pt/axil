@@ -41,12 +41,20 @@ struct descr {
 	char resp_headers[BUFSIZ];
 };
 
-extern struct descr descr_map[FD_SETSIZE];
-extern socket_t tunnel_pair[FD_SETSIZE];
-extern fd_set fds_read, fds_active, fds_write, fds_wactive;
-extern struct timeval exec_timeout;
-extern int do_cleanup;
-extern int axil_srv_flags;
+#ifndef AXIL_HIDDEN
+#if (defined(__GNUC__) || defined(__clang__)) && !defined(_WIN32)
+#define AXIL_HIDDEN __attribute__((visibility("hidden")))
+#else
+#define AXIL_HIDDEN
+#endif
+#endif
+
+extern struct descr descr_map[FD_SETSIZE] AXIL_HIDDEN;
+extern socket_t tunnel_pair[FD_SETSIZE] AXIL_HIDDEN;
+extern fd_set fds_read, fds_active, fds_write, fds_wactive AXIL_HIDDEN;
+extern struct timeval exec_timeout AXIL_HIDDEN;
+extern int do_cleanup AXIL_HIDDEN;
+extern int axil_srv_flags AXIL_HIDDEN;
 void _axil_cert_add(char *domain, char *crt, char *key);
 
 int axil_write_remaining(socket_t fd);

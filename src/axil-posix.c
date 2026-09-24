@@ -13,7 +13,8 @@
 #include <fnmatch.h>
 #include <grp.h>
 #include <pwd.h>
-#if defined(__APPLE__) || defined(__OpenBSD__) || defined(__FreeBSD__) || defined(__NetBSD__)
+#if defined(__APPLE__) || defined(__OpenBSD__) || defined(__FreeBSD__) ||      \
+        defined(__NetBSD__)
 #include <util.h>
 #else
 #include <pty.h>
@@ -34,14 +35,14 @@
 int chroot(const char *);
 int daemon(int, int);
 int setgroups(int, const gid_t *);
-int initgroups(const char *, int);  /* macOS uses int for gid */
+int initgroups(const char *, int); /* macOS uses int for gid */
 #endif
 
 #ifdef __OpenBSD__
 int chroot(const char *);
 int daemon(int, int);
 int setgroups(int, const gid_t *);
-int initgroups(const char *, gid_t);  /* OpenBSD uses gid_t */
+int initgroups(const char *, gid_t); /* OpenBSD uses gid_t */
 #endif
 
 /* OpenBSD may not define ECHOCTL */
@@ -50,7 +51,7 @@ int initgroups(const char *, gid_t);  /* OpenBSD uses gid_t */
 #endif
 
 #include "../include/ttypt/qsys.h"
-#include "../include/ttypt/qmap.h"
+#include "../include/ttypt/corm.h"
 
 static char *statics_mmap;
 static size_t statics_len = 0;
@@ -58,14 +59,16 @@ static size_t statics_len = 0;
 static char *autoindex_mmap;
 static size_t autoindex_len = 0;
 
+static char *cache_mmap;
+static size_t cache_len = 0;
+
 static struct passwd axil_pw;
 
 #define ENV_CAP 0xFF
 
 int axil_exec_loop(int cfd);
 
-static char **
-axil_env_prep(socket_t fd)
+static char **axil_env_prep(socket_t fd)
 {
 	struct descr *d = &descr_map[fd];
 	char **env = malloc(ENV_CAP * sizeof(char *));
@@ -73,13 +76,11 @@ axil_env_prep(socket_t fd)
 	size_t count = 0;
 	const void *key, *value;
 
-	cur = qmap_iter(d->env_hd, NULL, 0);
-	while (qmap_next(&key, &value, cur)) {
+	cur = corm_iter(d->env_hd, NULL, 0);
+	while (corm_next(&key, &value, cur)) {
 		char *envstr = malloc(ENV_LEN);
 		env[count++] = envstr;
-		snprintf(envstr, ENV_LEN, "%s=%s",
-				(char *) key,
-				(char *) value);
+		snprintf(envstr, ENV_LEN, "%s=%s", (char *)key, (char *)value);
 	}
 
 	env[count] = NULL;
@@ -87,16 +88,14 @@ axil_env_prep(socket_t fd)
 	return env;
 }
 
-static void
-axil_pw_free(struct passwd *target)
+static void axil_pw_free(struct passwd *target)
 {
 	free(target->pw_name);
 	free(target->pw_shell);
 	free(target->pw_dir);
 }
 
-static void
-axil_pw_copy(struct passwd *target, struct passwd *origin)
+static void axil_pw_copy(struct passwd *target, struct passwd *origin)
 {
 	*target = *origin;
 	target->pw_name = strdup(origin->pw_name);
@@ -105,8 +104,7 @@ axil_pw_copy(struct passwd *target, struct passwd *origin)
 	target->pw_passwd = NULL;
 }
 
-ssize_t
-axil_mmap(char **mapped, char *file)
+ssize_t axil_mmap(char **mapped, char *file)
 {
 	int fd = open(file, O_RDONLY);
 
@@ -125,7 +123,8 @@ axil_mmap(char **mapped, char *file)
 		return 0;
 	}
 
-	*mapped = mmap(NULL, file_size, PROT_READ | PROT_WRITE, MAP_PRIVATE, fd, 0);
+	*mapped = mmap(
+	        NULL, file_size, PROT_READ | PROT_WRITE, MAP_PRIVATE, fd, 0);
 	close(fd);
 
 	if (*mapped == MAP_FAILED)
@@ -134,8 +133,7 @@ axil_mmap(char **mapped, char *file)
 	return file_size;
 }
 
-char *
-axil_mmap_iter(char *start, size_t *pos_r)
+char *axil_mmap_iter(char *start, size_t *pos_r)
 {
 	char *line = start + *pos_r;
 	char *line_end = strchr(line, '\n');
@@ -145,8 +143,7 @@ axil_mmap_iter(char *start, size_t *pos_r)
 	return line;
 }
 
-static void
-axil_platform_init_pre_bind(void)
+static void axil_platform_init_pre_bind(void)
 {
 	char euname[BUFSIZ] = "root";
 	int euid = 0;
@@ -163,31 +160,28 @@ axil_platform_init_pre_bind(void)
 		CBUG(chroot(axil_config.chroot), "chroot\n");
 		CBUG(chdir("/"), "chdir\n");
 	} else
-		CBUG(chdir(axil_config.chroot),
-				"axil_main chdir2\n");
+		CBUG(chdir(axil_config.chroot), "axil_main chdir2\n");
 
 	signal(SIGPIPE, SIG_IGN);
 	signal(SIGHUP, SIG_IGN);
 	statics_len = axil_mmap(&statics_mmap, "./serve.allow");
 	autoindex_len = axil_mmap(&autoindex_mmap, "./serve.autoindex");
+	cache_len = axil_mmap(&cache_mmap, "./cache.allow");
 }
 
-static void
-axil_platform_init_post_bind(void)
+static void axil_platform_init_post_bind(void)
 {
 	if ((axil_srv_flags & AXIL_DETACH) && daemon(1, 1) != 0)
 		exit(EXIT_SUCCESS);
 }
 
-static void
-axil_platform_cleanup_descr(struct descr *d)
+static void axil_platform_cleanup_descr(struct descr *d)
 {
 	if (d->flags & DF_AUTHENTICATED)
 		axil_pw_free(&d->pw);
 }
 
-static void
-axil_platform_auth_try(socket_t fd)
+static void axil_platform_auth_try(socket_t fd)
 {
 	if (!axil_auth_check)
 		return;
@@ -196,12 +190,51 @@ axil_platform_auth_try(socket_t fd)
 		axil_auth(fd, user);
 }
 
-static void
-axil_platform_env_prep(socket_t fd)
+static void axil_platform_env_prep(socket_t fd)
 {
 	struct descr *d = &descr_map[fd];
 	axil_env_put(fd, "DOCUMENT_ROOT", geteuid() ? axil_config.chroot : "");
 	axil_env_put(fd, "HOME", d->pw.pw_dir);
+}
+
+static char *static_mapping_resolve(
+        char *start, char *glob, const char *path, char *output,
+        size_t output_len, struct stat *stat_buf)
+{
+	char candidate[BUFSIZ], resolved[BUFSIZ], root[BUFSIZ],
+	        root_spec[BUFSIZ];
+	char *aster = strchr(glob + 1, '*');
+	char saved = *glob;
+	size_t offset, root_len;
+	int len;
+
+	if (!aster)
+		return NULL;
+	offset = (size_t)(aster - (glob + 1));
+	*glob = '\0';
+	len = snprintf(root_spec, sizeof(root_spec), "./%s", start);
+	if (len < 0 || (size_t)len >= sizeof(root_spec) ||
+	    !realpath(root_spec, root))
+	{
+		*glob = saved;
+		return NULL;
+	}
+	len = snprintf(
+	        candidate, sizeof(candidate), "./%s/%s", start, path + offset);
+	*glob = saved;
+	if (len < 0 || (size_t)len >= sizeof(candidate) ||
+	    !realpath(candidate, resolved) || strlen(resolved) >= output_len)
+		return NULL;
+	strcpy(output, resolved);
+
+	root_len = strlen(root);
+	if (strncmp(root, output, root_len) != 0 ||
+	    (root_len != 1 && output[root_len] != '\0' &&
+	     output[root_len] != '/'))
+		return NULL;
+	if (stat(output, stat_buf))
+		return NULL;
+	return output;
 }
 
 static char *
@@ -219,22 +252,11 @@ axil_platform_static_allowed(const char *path, struct stat *stat_buf)
 		if (!glob)
 			break;
 		if (fnmatch(glob + 1, path, 0) == 0) {
-			register char aux = *glob,
-				 *aster = strchr(glob + 1, '*');
-
-			CBUG(!aster, "No asterisk on serve.allow\n");
-
-			size_t offset = aster - 1 - glob;
-			aux = *glob;
-			*glob = '\0';
-			size_t len = snprintf(output, sizeof(output), "./%s/%s", start, path + offset);
-			*glob = aux;
-			if (output[len - 1] != '/') {
-				if (stat(output, stat_buf))
-					continue;
-				out = output;
+			out = static_mapping_resolve(
+			        start, glob, path, output, sizeof(output),
+			        stat_buf);
+			if (out)
 				break;
-			}
 		}
 	} while (pos < statics_len);
 
@@ -260,14 +282,13 @@ axil_platform_autoindex_allowed(const char *uri, struct stat *stat_buf)
 		if (!glob)
 			break;
 		if (fnmatch(glob + 1, uri, 0) == 0) {
-			char aux = *glob;
-			*glob = '\0';
-			snprintf(fs_path, sizeof(fs_path), "./%s%s", start, uri);
-			*glob = aux;
-
-			// We found a mapping. Now check if it's a directory.
-			if (stat(fs_path, stat_buf) == 0 && S_ISDIR(stat_buf->st_mode)) {
-				// It's a valid directory. Now proceed to step 2.
+			if (static_mapping_resolve(
+			            start, glob, uri, fs_path, sizeof(fs_path),
+			            stat_buf) &&
+			    S_ISDIR(stat_buf->st_mode))
+			{
+				// It's a valid directory. Now proceed to
+				// step 2.
 				out = fs_path;
 				break;
 			}
@@ -295,8 +316,42 @@ axil_platform_autoindex_allowed(const char *uri, struct stat *stat_buf)
 	return NULL;
 }
 
-int
-axil_auth(socket_t fd, char *username)
+static void cache_directive_copy(const char *in, char *out, size_t outlen)
+{
+	size_t i, j;
+	for (i = 0, j = 0; in[i] && j < outlen - 1; i++)
+		if (in[i] != '\r' && in[i] != '\n')
+			out[j++] = in[i];
+	out[j] = '\0';
+}
+
+static int axil_platform_cache_policy(const char *uri, char *out, size_t outlen)
+{
+	char *rstart = cache_mmap, *start, *glob, save;
+	size_t pos = 0;
+
+	if (!cache_mmap || !uri || !out || !outlen)
+		return 0;
+
+	do {
+		start = axil_mmap_iter(rstart, &pos);
+		glob = strchr(start, ' ');
+		if (!glob || !glob[1])
+			continue;
+		save = *glob;
+		*glob = '\0';
+		if (fnmatch(start, uri, 0) == 0) {
+			cache_directive_copy(glob + 1, out, outlen);
+			*glob = save;
+			return 1;
+		}
+		*glob = save;
+	} while (pos < cache_len);
+
+	return 0;
+}
+
+int axil_auth(socket_t fd, char *username)
 {
 	struct descr *d = &descr_map[fd];
 	/* syserr(LOG_ERR, "axil_auth %d %s", fd, username); */
@@ -310,14 +365,12 @@ axil_auth(socket_t fd, char *username)
 	return 0;
 }
 
-static struct passwd *
-drop_priviledges(socket_t fd)
+static struct passwd *drop_priviledges(socket_t fd)
 {
 	struct descr *d = &descr_map[fd];
 	int euid = geteuid();
 
-	struct passwd *pw = (d->flags & DF_AUTHENTICATED)
-		? &d->pw : &axil_pw;
+	struct passwd *pw = (d->flags & DF_AUTHENTICATED) ? &d->pw : &axil_pw;
 
 	if (!axil_config.chroot) {
 		WARN("NOT_CHROOTED - running with %s\n", pw->pw_name);
@@ -325,7 +378,8 @@ drop_priviledges(socket_t fd)
 	}
 
 	if (euid != 0) {
-		WARN("NOT_ROOT - skipping privilege drop for %s\n", pw->pw_name);
+		WARN("NOT_ROOT - skipping privilege drop for %s\n",
+		     pw->pw_name);
 		return pw;
 	}
 
@@ -338,20 +392,17 @@ drop_priviledges(socket_t fd)
 	return pw;
 }
 
-static inline int
-popen2(socket_t cfd, char * const args[])
+static inline int popen2(socket_t cfd, char *const args[])
 {
 	struct descr *d = &descr_map[cfd];
 	pid_t p = -1;
 	int pipe_stdin[2], pipe_stdout[2], pipe_stderr[2];
 
-	if (pipe(pipe_stdin) \
-			|| pipe(pipe_stdout) \
-			|| pipe(pipe_stderr) \
-			|| (p = fork()) < 0)
+	if (pipe(pipe_stdin) || pipe(pipe_stdout) || pipe(pipe_stderr) ||
+	    (p = fork()) < 0)
 		return p;
 
-	if(p == 0) { /* child */
+	if (p == 0) { /* child */
 		drop_priviledges(cfd);
 		do_cleanup = 0;
 		close(pipe_stdin[1]);
@@ -362,7 +413,7 @@ popen2(socket_t cfd, char * const args[])
 		dup2(pipe_stderr[1], 2);
 		setpgid(0, 0);
 
-		char * const *env = axil_env_prep(cfd);
+		char *const *env = axil_env_prep(cfd);
 		execve(args[0], args, env);
 		CBUG(1, "execve\n");
 	}
@@ -376,9 +427,7 @@ popen2(socket_t cfd, char * const args[])
 	return p;
 }
 
-static inline
-ssize_t cb_proc(socket_t fd, int pfd,
-		cmd_cb_t callback)
+static inline ssize_t cb_proc(socket_t fd, int pfd, cmd_cb_t callback)
 {
 	char axil_execbuf[BUFSIZ * 64];
 
@@ -404,12 +453,12 @@ ssize_t cb_proc(socket_t fd, int pfd,
 	return len;
 }
 
-int
-axil_exec_loop(int cfd)
+int axil_exec_loop(int cfd)
 {
 	struct descr *d = &descr_map[cfd];
 	fd_set read_fds;
-	int ready_fds, total_timeout = 40 /* should be a config option */, ret = 0;
+	int ready_fds, total_timeout = 40 /* should be a config option */,
+	               ret = 0;
 	ssize_t len = 0;
 
 	d->flags &= ~DF_TO_CLOSE;
@@ -426,11 +475,12 @@ axil_exec_loop(int cfd)
 		dt = time(NULL) - d->sor;
 
 		if (dt >= total_timeout) {
-			axil_writef(cfd, "504 Gateway Timeout\r\n"
-					"Content-Type: text/plain\r\n"
-					"Content-Length: 26\r\n"
-					"\r\n"
-					"Code 504: Gateway Timeout\n");
+			axil_writef(
+			        cfd, "504 Gateway Timeout\r\n"
+			             "Content-Type: text/plain\r\n"
+			             "Content-Length: 26\r\n"
+			             "\r\n"
+			             "Code 504: Gateway Timeout\n");
 			ERR("Timeout! %u\n", cfd);
 			break;
 		}
@@ -441,7 +491,8 @@ axil_exec_loop(int cfd)
 		if (d->pipes_mask & 2)
 			FD_SET(d->pipes[2], &read_fds);
 
-		ready_fds = select(d->pipes[1] + 1, &read_fds, NULL, NULL, &timeout);
+		ready_fds = select(
+		        d->pipes[1] + 1, &read_fds, NULL, NULL, &timeout);
 
 		if (!ready_fds)
 			return 1;
@@ -484,11 +535,14 @@ axil_exec_loop(int cfd)
 		char axil_execbuf[BUFSIZ * 64];
 		read(d->pipes[2], axil_execbuf, sizeof(axil_execbuf) - 1);
 		ERR("%s\n", axil_execbuf);
-		axil_writef(cfd, "500 Internal Server Error\r\n"
-				"Content-Type: text/plain\r\n"
-				"Content-Length: %ld\r\n"
-				"\r\n"
-				"Code 500: Internal Server Error:\n%s\n", strlen(axil_execbuf) + 37, axil_execbuf);
+		axil_writef(
+		        cfd,
+		        "500 Internal Server Error\r\n"
+		        "Content-Type: text/plain\r\n"
+		        "Content-Length: %ld\r\n"
+		        "\r\n"
+		        "Code 500: Internal Server Error:\n%s\n",
+		        strlen(axil_execbuf) + 37, axil_execbuf);
 		ret = -1;
 	} else {
 		len = cb_proc(cfd, d->pipes[2], d->callback);
@@ -509,10 +563,9 @@ axil_exec_loop(int cfd)
 	return ret;
 }
 
-void
-axil_exec(int cfd, char * const args[],
-		cmd_cb_t callback, void *input,
-		size_t input_len)
+void axil_exec(
+        int cfd, char *const args[], cmd_cb_t callback, void *input,
+        size_t input_len)
 {
 	struct descr *d = &descr_map[cfd];
 	int flags;
@@ -535,8 +588,7 @@ axil_exec(int cfd, char * const args[],
 	FD_SET(cfd, &fds_wactive);
 }
 
-void
-axil_cert_add(char *optarg)
+void axil_cert_add(char *optarg)
 {
 	char *domain = optarg, *crt, *ioc;
 	ioc = strchr(optarg, ':');
@@ -550,8 +602,7 @@ axil_cert_add(char *optarg)
 	axil_srv_flags |= AXIL_SSL;
 }
 
-void
-axil_certs_add(char *certs_file)
+void axil_certs_add(char *certs_file)
 {
 	char *mapped;
 	size_t file_size = axil_mmap(&mapped, certs_file);
@@ -574,13 +625,13 @@ static const struct axil_platform_ops axil_posix_ops = {
 	.env_prep = axil_platform_env_prep,
 	.static_allowed = axil_platform_static_allowed,
 	.autoindex_allowed = axil_platform_autoindex_allowed,
+	.cache_policy = axil_platform_cache_policy,
 	.exec_loop = axil_exec_loop,
 };
 
 extern unsigned mime_hd;
 
-void
-axil_sendfile(socket_t fd, const char *path)
+void axil_sendfile(socket_t fd, const char *path)
 {
 	int file_fd = open(path, O_RDONLY);
 	if (file_fd < 0) {
@@ -596,11 +647,13 @@ axil_sendfile(socket_t fd, const char *path)
 	}
 
 	char *ext = strrchr(path, '.');
-	const char *mime = ext ? (const char *)qmap_get(mime_hd, ext + 1) : NULL;
+	const char *mime =
+	        ext ? (const char *)corm_get(mime_hd, ext + 1) : NULL;
 	if (!mime)
 		mime = "application/octet-stream";
 
-	char *mapped = mmap(NULL, st.st_size, PROT_READ, MAP_PRIVATE, file_fd, 0);
+	char *mapped =
+	        mmap(NULL, st.st_size, PROT_READ, MAP_PRIVATE, file_fd, 0);
 	close(file_fd);
 
 	if (mapped == MAP_FAILED) {
@@ -613,14 +666,14 @@ axil_sendfile(socket_t fd, const char *path)
 	axil_header_set(fd, "Content-Type", mime);
 	axil_header_set(fd, "Content-Length", len_buf);
 	axil_respond(fd, 200, NULL);
-        axil_write(fd, mapped, st.st_size);
-        munmap(mapped, st.st_size);
-        struct descr *d = &descr_map[fd];
-        d->flags |= DF_TO_CLOSE;
-        if (!d->remaining_len)
-                axil_close(fd);
-        else
-                axil_write_remaining(fd);
+	axil_write(fd, mapped, st.st_size);
+	munmap(mapped, st.st_size);
+	struct descr *d = &descr_map[fd];
+	d->flags |= DF_TO_CLOSE;
+	if (!d->remaining_len)
+		axil_close(fd);
+	else
+		axil_write_remaining(fd);
 }
 
-const struct axil_platform_ops *axil_platform = &axil_posix_ops;
+const struct axil_platform_ops *axil_platform AXIL_HIDDEN = &axil_posix_ops;

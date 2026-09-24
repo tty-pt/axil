@@ -33,7 +33,7 @@ axil_auth_check(socket_t fd)
 	char cookie[ENV_VALUE_LEN], *eq;
 	FILE *fp;
 
-	if (axil_env_get(fd, cookie, "HTTP_COOKIE"))
+	if (axil_env_get(fd, cookie, sizeof(cookie), "HTTP_COOKIE"))
 		return NULL;
 
 	eq = strchr(cookie, '=');
@@ -75,8 +75,9 @@ main(int argc, char *argv[])
 
 	axil_config.default_handler = auth_handler;
 	axil_register("GET", do_GET, CF_NOAUTH | CF_NOTRIM);
-	axil_register("PRI", do_GET, CF_NOAUTH | CF_NOTRIM);
 	axil_register("POST", do_POST, CF_NOAUTH | CF_NOTRIM);
+	axil_register("PUT", do_PUT, CF_NOAUTH | CF_NOTRIM);
+	axil_register("DELETE", do_DELETE, CF_NOAUTH | CF_NOTRIM);
 
 	#if defined(SIGPIPE)
 		signal(SIGPIPE, SIG_IGN);

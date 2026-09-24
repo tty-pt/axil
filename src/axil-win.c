@@ -4,7 +4,7 @@
 #include <fcntl.h>
 #include <io.h>
 #include <sys/stat.h>
-#include <ttypt/qmap.h>
+#include <ttypt/corm.h>
 
 extern unsigned mime_hd;
 
@@ -25,7 +25,7 @@ axil_sendfile(socket_t fd, const char *path)
 	}
 
 	char *ext = strrchr(path, '.');
-	const char *mime = ext ? (const char *)qmap_get(mime_hd, ext + 1) : NULL;
+	const char *mime = ext ? (const char *)corm_get(mime_hd, ext + 1) : NULL;
 	if (!mime)
 		mime = "application/octet-stream";
 
@@ -186,6 +186,15 @@ axil_platform_autoindex_allowed(const char *uri, struct stat *stat_buf)
 }
 
 static int
+axil_platform_cache_policy(const char *uri, char *out, size_t outlen)
+{
+	(void)uri;
+	(void)out;
+	(void)outlen;
+	return 0;
+}
+
+static int
 axil_platform_exec_loop(socket_t fd)
 {
 	(void)fd;
@@ -204,6 +213,7 @@ static const struct axil_platform_ops axil_win_ops = {
 	.env_prep = axil_platform_env_prep,
 	.static_allowed = axil_platform_static_allowed,
 	.autoindex_allowed = axil_platform_autoindex_allowed,
+	.cache_policy = axil_platform_cache_policy,
 	.exec_loop = axil_platform_exec_loop,
 };
 
