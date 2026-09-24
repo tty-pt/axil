@@ -1,8 +1,15 @@
-## [Unreleased]
+## 1.4.0
 
-- Teardown no longer calls `SSL_shutdown` (no close_notify on a dead peer).
-- HTTP/2 prior-knowledge preface (`PRI * HTTP/2.0`) is dropped, not treated as GET.
-- ALPN advertises `http/1.1` only. Not a protocol freeze — add `h2` when HTTP/2 exists.
+- **Renamed `libndc` → `axil`**: the `ndc_*` API and `include/ttypt/ndc.h` became `axil_*` / `include/ttypt/axil.h` (`ndc.pc` → `axil.pc`, lib renamed accordingly). XY hooks are now `axil_*` (`on_axil_exit`, `on_axil_vim`, `on_axil_command`, `on_axil_connect`, `on_axil_disconnect`, `on_axil_tick`, `on_axil_parse` in `include/ttypt/axil-xy.h`).
+- **Unified request-parameter API**: `axil_req_param(fd, body, name, buf, len)` plus `_int`/`_bool` variants read a parameter from a URL-encoded form body or the query string in a single call (handles quoted values); `axil_param`/`axil_param_int`/`axil_param_bool` cover the query-string path, with support for special characters in the URL.
+- **PUT, DELETE and HEAD support**: new `AXIL_PUT` / `AXIL_DELETE` / `AXIL_HEAD` request flags, `do_PUT`/`do_DELETE`/`do_HEAD` handlers, and `DF_HEAD` to suppress the response body.
+- **Encoding helpers**: `axil_url_encode` / `axil_url_decode` (percent-encoding, `%XX` and `+`), `axil_json_escape`, and `axil_slugify` for URL/filesystem-safe slugs.
+- **Static-file serving**: `axil_respond_file` / `axil_sendfile` with auto-detected MIME type, ETag validator headers derived from the file stat, and an mmap-backed `cache.allow` caching policy (OpenBSD-compatible).
+- **Response conveniences**: `axil_respond_plain`/`axil_respond_json`/`axil_respond_json_ok`/`axil_respond_no_content`, `axil_redirect` (303).
+- **Deferred responses**: `axil_respond_defer(fd, code)` sends status + headers now; the body is completed later from the event loop via `axil_respond_defer_finish`/`_done`/`_abort` (streaming and long-poll style responses).
+- **Performance**: optimised header conversion, cached HTTP date strings, `TCP_NODELAY`, single-write responses.
+- **Hardening**: audit fixes, expanded test suite, OpenBSD (`iconv`) build fix, `bmake` compatibility, and the `libqmap` → `libcorm` rename in the build.
+- **TLS & HTTP/2 hardening**: teardown no longer calls `SSL_shutdown` (no `close_notify` on a dead peer); the HTTP/2 prior-knowledge preface (`PRI * HTTP/2.0`) is dropped, not treated as a GET; ALPN advertises `http/1.1` only (not a protocol freeze — add `h2` when HTTP/2 exists).
 
 ## [v1.1.0] - 2026-04-18
 
