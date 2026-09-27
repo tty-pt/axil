@@ -90,7 +90,12 @@ enum axil_req_flags {
 	AXIL_HEAD = 8,
 };
 
-/** HTTP handler callback signature. */
+/** HTTP handler callback signature.
+ *
+ * \p body points at the request body: exactly `Content-Length` bytes,
+ * NUL-terminated, so strlen(body) gives its length. A request without a
+ * Content-Length has an empty body. A final read can overshoot Content-Length
+ * with the start of a following request; those bytes are discarded. */
 typedef int axil_handler_t(socket_t cfd, char *body);
 
 /** WebSocket tunnel callback: connects to upstream and returns socket.
@@ -166,19 +171,40 @@ void axil_ws_handler(char *path, axil_ws_upstream_t handler);
 /** Upgrade connection to websocket. Reads Sec-WebSocket-Key from the request
  *  environment, performs the handshake, and calls axil_connect() on success.
  *  Modules should call this explicitly from their GET handler when
- *  HTTP_SEC_WEBSOCKET_KEY is present in the request environment. */
+ *  HTTP_SEC_WEBSOCKET_KEY is present in the request environment.
+ *
+ *  You must also call axil_fd_watch(fd) immediately afterwards. axil drains
+ *  incoming frames itself -- it has to, or the event loop spins on a socket that
+ *  stays readable -- but it only hands them to the module once the fd is
+ *  watched, via the axil_fd_tick() hook. Without axil_fd_watch() every frame is
+ *  read and discarded, silently: the connection completes its handshake and then
+ *  ignores the client. Frames are never parsed as HTTP requests. */
 int axil_ws_upgrade(socket_t fd);
 
-/** Write data to websocket. */
+/** Write data to websocket. Returns the size of the frame written, header
+ *  included, or -1 if the connection failed. On a non-blocking socket a frame
+ *  too large for the socket buffers is queued whole -- header and payload
+ *  together, so frames cannot interleave -- and flushed by the event loop, so a
+ *  non-negative result does not mean the bytes have already left the socket.
+ *
+ *  `fd` must be in [0, FD_SETSIZE); anything else returns -1 with `errno` EBADF
+ *  rather than indexing the module's descriptor tables out of bounds. */
 int axil_ws_write(socket_t fd, const void *data, size_t len);
 
-/** Read data from websocket. Returns bytes read, 0 on close, -1 on error. */
+/** Read data from websocket. Returns bytes read (NUL-terminated), 0 on close,
+ *  -1 on error. A frame larger than `len - 1` is refused rather than truncated:
+ *  -1 with `errno` EMSGSIZE. A partially received frame returns -1 with `errno`
+ *  EAGAIN and stays open, so the caller must wait for readability.
+ *
+ *  `fd` must be in [0, FD_SETSIZE); anything else returns -1 with `errno` EBADF. */
 ssize_t axil_ws_read(socket_t fd, void *buf, size_t len);
 
-/** Close websocket connection. */
+/** Close websocket connection. Returns 0, or -1 with `errno` EBADF if `fd` is
+ *  outside [0, FD_SETSIZE). */
 int axil_ws_close(socket_t fd);
 
-/** Formatted write to websocket. */
+/** Formatted write to websocket. Returns the number of bytes written, or -1 on
+ *  error (same contract as axil_ws_write(), including the EBADF bound). */
 int axil_ws_printf(socket_t fd, const char *fmt, ...);
 
 /* define these */
@@ -191,7 +217,18 @@ extern int axil_accept(socket_t fd) WEAK;
 /** Called after a WebSocket upgrade completes via axil_ws_upgrade().
  *  Return non-zero to mark the connection as established (DF_CONNECTED). */
 extern int axil_connect(socket_t fd) WEAK;
-/** Called on disconnect. */
+/** Called on disconnect.
+ *
+ *  Fires whenever a descriptor is torn down, not only when a peer hangs up --
+ *  axil_close() and a failed read both reach it.
+ *
+ *  It also fires for a connection that was only ever HTTP-authenticated, which
+ *  has no pty and no upstream: axil_auth() marks the descriptor
+ *  DF_CONNECTED, and DF_CONNECTED is what gates the hook. Such a descriptor
+ *  also enters DESCR_ITER, so axil_wall() broadcasts to it. That is
+ *  deliberate -- a module cannot tell an authenticated-but-pty-less connection
+ *  from any other -- but it means a hook here must tolerate a missing pty and a
+ *  missing upstream rather than assuming a module connection shape. */
 extern void axil_disconnect(socket_t fd) WEAK;
 /** Called before a registered command handler. */
 extern void axil_command(socket_t fd, int argc, char *argv[]) WEAK; /* will run on any command */
@@ -225,7 +262,32 @@ int axil_flags(socket_t fd);
 void axil_close(socket_t fd);
 /** Set descriptor flags. */
 void axil_set_flags(socket_t fd, int flags);
-/** Authenticate a user for fd; returns 0 on success, 1 on failure. */
+/** Authenticate a user for fd, dropping privileges to them (POSIX).
+ *
+ * Marks the connection authenticated and connected (so axil_disconnect() fires
+ * and the fd is visible to axil_wall()/DESCR_ITER), publishes REMOTE_USER, and
+ * records the user's passwd entry for axil_get_pw(). If the user is unknown to
+ * the system, the entry from axil_pw is used instead, so the connection runs
+ * with the server's own identity rather than uid 0: validate the name first,
+ * e.g. with axil_auth_check().
+ *
+ * The name is copied into a fixed BUFSIZ field and truncated to 8191 bytes if
+ * it is longer, with a warning; it is not rejected. A truncated name is almost
+ * certainly not the account that was intended, so validate length as well as
+ * existence before calling.
+ *
+ * Returns 0 on success, 1 if the name is unknown to the system (the
+ * connection is still marked authenticated), or -1 with errno EBADF if fd is
+ * not in [0, FD_SETSIZE).
+ *
+ * @warning The 0/1 return is ADVISORY. Nothing in this library enforces it:
+ * axil_platform_auth_try() calls axil_auth() and discards the result, and the
+ * platform hook it is invoked through is `void (*)(socket_t)`, so there is
+ * nowhere for a verdict to travel. A caller that wants to reject an unknown
+ * name must check for itself -- compare against your own account list, or
+ * pre-validate with axil_auth_check() -- rather than relying on the 1. The
+ * privilege fallback to the server's own identity applies either way, so an
+ * unenforced 1 degrades to "runs as the server", not to uid 0. */
 int axil_auth(socket_t fd, char *username);
 /** Return internal env handle for fd (advanced use; stable but not recommended). */
 unsigned axil_env(socket_t fd);
