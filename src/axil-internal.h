@@ -31,6 +31,13 @@ struct descr {
 	int pipes[3], pipes_mask;
 	cmd_cb_t callback;
 	size_t total;
+	/* Partial request head, carried across select() passes. Accepted sockets
+	 * are non-blocking (descr_new), so a request whose CRLFCRLF terminator
+	 * has not arrived yet cannot be parsed; the bytes are stashed here and
+	 * axil_read() reports EAGAIN so the event loop waits for more. Allocated
+	 * lazily, so a request that arrives in one segment never allocates. */
+	unsigned char *head;
+	size_t head_len, head_cap;
 #ifndef _WIN32
 	struct winsize wsz;
 	struct termios tty;

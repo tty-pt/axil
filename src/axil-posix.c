@@ -353,14 +353,50 @@ static int axil_platform_cache_policy(const char *uri, char *out, size_t outlen)
 
 int axil_auth(socket_t fd, char *username)
 {
-	struct descr *d = &descr_map[fd];
+	struct descr *d;
+	size_t len;
+
+	/* The same descriptor bound S6.5 added to the axil_ws_* wrappers, and for
+	 * the same reason: descr_map[] is [FD_SETSIZE] and this indexes it with
+	 * whatever it is handed. Found by reading this function while fixing the
+	 * line below it, not by the finding that asked for it. */
+	if (fd < 0 || fd >= FD_SETSIZE) {
+		errno = EBADF;
+		return -1;
+	}
+
+	d = &descr_map[fd];
 	/* syserr(LOG_ERR, "axil_auth %d %s", fd, username); */
-	strncpy(d->username, username, sizeof(d->username));
-	d->flags |= DF_AUTHENTICATED;
+
+	/* strncpy() does not terminate the destination when the source fills or
+	 * overruns it, and d->username is BUFSIZ (8192) bytes inside struct descr.
+	 * An auth_check() returning a longer name -- an LDAP or SSO principal, a
+	 * header value, anything an embedder forwards verbatim -- left the field
+	 * unterminated, and both reads below then ran off the end of it into the
+	 * adjacent descriptor state: axil_env_put() copied whatever it found there
+	 * into the environment, where a handler or a child process can read it, and
+	 * getpwnam() searched it for a match. Terminate explicitly.
+	 *
+	 * The truncation is logged rather than silent: a username quietly cut at
+	 * 8191 bytes is worth knowing about, because the two halves no longer
+	 * match. */
+	len = strlen(username);
+	strncpy(d->username, username, sizeof(d->username) - 1);
+	d->username[sizeof(d->username) - 1] = '\0';
+	if (len >= sizeof(d->username))
+		WARN("axil_auth %d: username of %zu bytes truncated to %zu\n", fd, len,
+		     sizeof(d->username) - 1);
+
+	d->flags |= DF_AUTHENTICATED | DF_CONNECTED;
 	axil_env_put(fd, "REMOTE_USER", d->username);
 	struct passwd *pw = getpwnam(d->username);
-	if (!pw)
+	if (!pw) {
+		/* Unknown name: still authenticated, but run as the server's own
+		 * identity rather than the zeroed entry this used to leave behind
+		 * (uid 0). The return value lets the caller reject the name. */
+		axil_pw_copy(&d->pw, &axil_pw);
 		return 1;
+	}
 	axil_pw_copy(&d->pw, pw);
 	return 0;
 }
@@ -646,7 +682,7 @@ void axil_sendfile(socket_t fd, const char *path)
 		return;
 	}
 
-	char *ext = strrchr(path, '.');
+	const char *ext = strrchr(path, '.');
 	const char *mime =
 	        ext ? (const char *)corm_get(mime_hd, ext + 1) : NULL;
 	if (!mime)
@@ -665,15 +701,16 @@ void axil_sendfile(socket_t fd, const char *path)
 	snprintf(len_buf, sizeof(len_buf), "%ld", (long)st.st_size);
 	axil_header_set(fd, "Content-Type", mime);
 	axil_header_set(fd, "Content-Length", len_buf);
-	axil_respond(fd, 200, NULL);
-	axil_write(fd, mapped, st.st_size);
+
+	void *defer = axil_respond_defer(fd, 200);
+	if (!defer) {
+		munmap(mapped, st.st_size);
+		return;
+	}
+	if (!(descr_map[fd].flags & DF_HEAD) && st.st_size > 0)
+		axil_write(fd, mapped, st.st_size);
 	munmap(mapped, st.st_size);
-	struct descr *d = &descr_map[fd];
-	d->flags |= DF_TO_CLOSE;
-	if (!d->remaining_len)
-		axil_close(fd);
-	else
-		axil_write_remaining(fd);
+	axil_respond_defer_done(defer);
 }
 
 const struct axil_platform_ops *axil_platform AXIL_HIDDEN = &axil_posix_ops;

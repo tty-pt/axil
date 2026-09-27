@@ -210,7 +210,7 @@ include cross-origin isolation headers by default:
 |----------|-------------|--------------|
 | `axil_exec(fd, args[], cb, input, len)` | Execute command with callback | - |
 | `axil_exec_loop(fd)` | Continue processing a command started with `axil_exec()` | - |
-| `axil_auth(fd, username)` | Mark user as authenticated, drop privileges (POSIX) | 0 on success, 1 on failure |
+| `axil_auth(fd, username)` | Mark user as authenticated, drop privileges (POSIX) | 0 on success, 1 if unknown to the system (still authenticated, runs as the `axil_pw` identity) |
 | `axil_get_pw(fd, out)` | Copy authenticated user's passwd entry | 0 on success, -1 if not auth'd |
 | `axil_cert_add(str)` | Add cert mapping: `domain:cert.pem:key.pem` | - |
 | `axil_certs_add(fname)` | Load certificate mappings from file | - |
@@ -296,17 +296,32 @@ void setup_ws(void) {
     axil_ws_handler("/ws", my_upstream);       // Register WS tunnel path
 }
 
-// Manual upgrade for non-tunnel use:
-int fd = ...;
-axil_ws_upgrade(fd);
-axil_ws_write(fd, "hello", 5);
+// Manual upgrade for non-tunnel use. axil_fd_watch() is NOT optional: axil
+// drains incoming frames itself and only routes them to the module once the fd
+// is watched, via the axil_fd_tick() hook. Skip it and the handshake succeeds
+// but every frame the client sends is silently discarded.
+void on_tick(socket_t fd) {
+    char buf[65536];
+    ssize_t n = axil_ws_read(fd, buf, sizeof(buf));
+    if (n <= 0) return;              // EAGAIN, close, or refused
+    axil_ws_write(fd, buf, (size_t)n);
+}
+
+int my_get_handler(socket_t fd, char *body) {
+    if (!axil_ws_upgrade(fd)) {
+        axil_fd_watch(fd);           // start routing frames to on_tick()
+        return 0;
+    }
+    return 1;                        // no Sec-WebSocket-Key: not a WS request
+}
 ```
 
 | Function | Description | Return Value |
 |----------|-------------|--------------|
 | `axil_ws_handler(path, handler)` | Register WebSocket tunnel handler for a path | - |
 | `axil_ws_upgrade(fd)` | Upgrade connection to WebSocket (handshake + connect hook) | 0 on success |
-| `axil_ws_write(fd, data, len)` | Write data to WebSocket | Bytes written or -1 |
+| `axil_fd_watch(fd)` | Required after `axil_ws_upgrade()`; routes frames to `axil_fd_tick()` | - |
+| `axil_ws_write(fd, data, len)` | Write data to WebSocket | Frame size (header included) or -1 |
 | `axil_ws_read(fd, buf, len)` | Read data from WebSocket | Bytes read, 0 on close, -1 on error |
 | `axil_ws_close(fd)` | Close WebSocket connection | 0 on success |
 | `axil_ws_printf(fd, fmt, ...)` | Formatted write to WebSocket | Written or -1 |

@@ -96,6 +96,21 @@
 #define FIRST_INPUT_SIZE (BUFSIZ * 2)
 #define SELECT_TIMEOUT 10000
 #define EXEC_TIMEOUT 1000
+/* Per-descriptor bound on a partially received request head. A client that
+ * never sends its blank line gets a 431 and its fd freed (descr_read) instead
+ * of an unbounded stash. Generous next to what the header storage (ENV_VALUE_LEN)
+ * can hold, so only a real slowloris or a bug trips it. */
+#define MAX_REQUEST_HEAD (64 * 1024)
+
+/* Body-read stall budget. A non-blocking socket may simply not have the rest of
+ * a declared body yet, which is indistinguishable from a disconnect and used to
+ * kill the request. EAGAIN is retried inline on the event loop, so the wait has
+ * to be bounded: MAX_BODY_STALL_RETRIES * BODY_STALL_SLEEP_MS caps the cost to
+ * 10 ms. Only stalls count against the budget -- counting every read would cap
+ * the body at 20 * BUFSIZ (~160 KiB) and silently truncate anything bigger. A
+ * handler that must not block at all wants axil_respond_defer() instead. */
+#define MAX_BODY_STALL_RETRIES 20
+#define BODY_STALL_SLEEP_MS    500
 
 struct descr descr_map[FD_SETSIZE] AXIL_HIDDEN;
 
@@ -386,6 +401,18 @@ void axil_close(socket_t fd)
 {
 	if (fd == INVALID_SOCKET || fd >= FD_SETSIZE)
 		return;
+	/* Teardown is not idempotent at the syscall level: a real write error
+	 * closes the fd from inside axil_low_write(), after which axil_respond(),
+	 * axil_respond_defer_done(), axil_respond_defer_finish() and
+	 * axil_write_remaining() all close again. The second pass would re-run
+	 * axil_disconnect(), cleanup_descr(), shutdown() and close() against a
+	 * dead number, and re-set DF_TO_CLOSE on the descriptor the first pass
+	 * reset. If the kernel reissued the number in between -- it can, via the
+	 * module hooks below -- that pass would close somebody else's fd.
+	 * d->fd is -1 until descr_new() reuses the number, which is exactly the
+	 * window this closes. */
+	if (descr_map[fd].fd != fd)
+		return;
 
 	struct descr *d = &descr_map[fd];
 
@@ -437,6 +464,7 @@ void axil_close(socket_t fd)
 
 	tunnel_pair[fd] = INVALID_SOCKET;
 
+	free(d->head);
 	memset(d, 0, sizeof(struct descr));
 	d->fd = -1;
 
@@ -503,7 +531,9 @@ static int ssl_accept(socket_t fd)
 	}
 
 	int ssl_err = SSL_get_error(d->cSSL, res);
-	if (errno == EAGAIN && ssl_err == SSL_ERROR_WANT_READ)
+	/* A non-blocking handshake needs to be resumed from descr_proc_writes
+	 * when either side of the socket is not ready. */
+	if (ssl_err == SSL_ERROR_WANT_READ || ssl_err == SSL_ERROR_WANT_WRITE)
 		return 0;
 
 	ERR("SSL_accept %d %d %d %d %s\n", fd, res, ssl_err, errno,
@@ -606,13 +636,23 @@ int axil_write_remaining(socket_t fd)
 	return ret;
 }
 
-inline static void axil_rem_may_inc(socket_t fd, size_t len)
+/* Make room for `len` more bytes at the end of the write queue, growing the
+ * buffer if it has to. Returns 0 on success, -1 if the buffer could not grow, in
+ * which case the queue is left exactly as it was.
+ *
+ * The return value used to be void, so a realloc() that failed returned quietly
+ * and every caller went on to memcpy() into a buffer that had not grown. That
+ * was a heap overflow on the write path, and the bytes past the end were then
+ * flushed to the peer (SECURITY.md finding 3). Callers must check, and must not
+ * memcpy when this returns -1. */
+inline static int axil_rem_may_inc(socket_t fd, size_t len)
 {
 	struct descr *d = &descr_map[fd];
+	size_t need, old_size;
 
 	size_t tail = d->remaining_size - (d->remaining_off + d->remaining_len);
 	if (tail >= len)
-		return;
+		return 0;
 
 	// compact
 	if (d->remaining_off) {
@@ -621,22 +661,38 @@ inline static void axil_rem_may_inc(socket_t fd, size_t len)
 		d->remaining_off = 0;
 		tail = d->remaining_size - d->remaining_len;
 		if (tail >= len)
-			return;
+			return 0;
 	}
 
-	size_t need = d->remaining_off + d->remaining_len + len;
-	size_t old_size = d->remaining_size;
+	/* The queue never gets compacted again after this point, so there is no
+	 * wrapped-around off. A size_t overflow here would leave `need` below
+	 * remaining_size, skip the growth, and hand the caller a buffer smaller
+	 * than the memcpy it is about to do. */
+	if (len > SIZE_MAX - d->remaining_len) {
+		errno = ENOMEM;
+		return -1;
+	}
+	need = d->remaining_len + len;
+	old_size = d->remaining_size;
 
 	while (need >= d->remaining_size) {
-		while (d->remaining_size < need)
+		if (d->remaining_size > SIZE_MAX / 2) {
+			/* Doubling would wrap to 0 and spin this loop forever. */
+			d->remaining_size = need;
+		} else {
 			d->remaining_size *= 2;
+		}
+
 		char *tmp = realloc(d->remaining, d->remaining_size);
 		if (!tmp) {
 			d->remaining_size = old_size;
-			return;
+			errno = ENOMEM;
+			return -1;
 		}
 		d->remaining = tmp;
 	}
+
+	return 0;
 }
 
 static io_ssize_t
@@ -646,7 +702,13 @@ axil_low_write(socket_t fd, void *from, io_size_t len, int flags UNUSED)
 	struct io *dio = &io[fd];
 
 	if (d->remaining_len) {
-		axil_rem_may_inc(fd, len);
+		/* The stream cannot survive a queue that will not grow: the bytes
+		 * ahead of these are already promised to the peer, so there is no
+		 * ordering left to preserve. Fail closed. */
+		if (axil_rem_may_inc(fd, len) < 0) {
+			axil_close(fd);
+			return -1;
+		}
 		memcpy(d->remaining + d->remaining_off + d->remaining_len, from,
 		       len);
 		d->remaining_len += len;
@@ -656,18 +718,36 @@ axil_low_write(socket_t fd, void *from, io_size_t len, int flags UNUSED)
 
 	int ret = dio->lower_write(fd, from, len, flags);
 
-	if (ret < 0 && errno == EAGAIN) {
-		axil_rem_may_inc(fd, len);
-		memcpy(d->remaining, from, len);
-		d->remaining_off = 0;
-		d->remaining_len = len;
+	if (ret < 0) {
+		if (errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR) {
+			if (axil_rem_may_inc(fd, len) < 0) {
+				axil_close(fd);
+				return -1;
+			}
+			memcpy(d->remaining, from, len);
+			d->remaining_off = 0;
+			d->remaining_len = len;
+			return -1;
+		}
+
+		/* A real write error. Returning left the fd in the descriptor table
+		 * with a stream nobody would ever complete, so every later caller
+		 * kept writing into it. Close instead: -1 from this function then
+		 * means "queued" or "gone", and never "still open, still broken",
+		 * which is what lets ws_write() report honestly (SECURITY.md S2.2).
+		 * axil_close() also frees d->remaining, so nothing is left queued
+		 * for a descriptor that no longer exists. */
+		axil_close(fd);
 		return -1;
 	}
 
 	if (ret >= 0 && (size_t)ret < len) {
 		// partial send
 		size_t left = len - ret;
-		axil_rem_may_inc(fd, left);
+		if (axil_rem_may_inc(fd, left) < 0) {
+			axil_close(fd);
+			return -1;
+		}
 		memcpy(d->remaining, (char *)from + ret, left);
 		d->remaining_off = 0;
 		d->remaining_len = left;
@@ -701,6 +781,17 @@ static void descr_new(int ssl)
 		return;
 	}
 
+	/* Non-blocking, so the event loop can multiplex. Keep the existing
+	 * flags, and use the winsock spelling where fcntl() is not fcntl(). */
+#ifdef _WIN32
+	u_long nonblock = 1;
+	ioctlsocket(fd, FIONBIO, &nonblock);
+#else
+	int fl = fcntl(fd, F_GETFL, 0);
+	if (fl != -1)
+		fcntl(fd, F_SETFL, fl | O_NONBLOCK);
+#endif
+
 #ifdef TCP_NODELAY
 	int nodelay = 1;
 	setsockopt(fd, IPPROTO_TCP, TCP_NODELAY, (char *)&nodelay, sizeof(nodelay));
@@ -712,6 +803,14 @@ static void descr_new(int ssl)
 	dio = &io[fd];
 	memset(d, 0, sizeof(struct descr));
 	memset(dio, 0, sizeof(struct io));
+	/* frame_map is keyed by fd number and is not part of struct descr, so the
+	 * memsets above do not touch it. A closed WebSocket that still held a
+	 * partially received frame would otherwise leave frame_map[fd].data
+	 * pointing at freed-or-not memory for the next connection to land on this
+	 * fd number, and ws_read() reuses a non-NULL frame->data instead of
+	 * allocating, so the new frame would be written into the old frame's
+	 * buffer (SECURITY.md finding 7, S5.2). */
+	ws_frame_reset(fd);
 	d->addr = addr;
 	d->fd = fd;
 	d->flags = 0;
@@ -774,36 +873,163 @@ static void axil_upstream_descr_init(socket_t fd)
 	dio->write = axil_low_write;
 }
 
+/* Does the accumulated request contain a complete head, i.e. a blank line?
+ * Returns the length of the buffer when it does, 0 when it does not. The method
+ * is not inspected: a WebSocket frame or a tunnelled byte stream never reaches
+ * this function, because descr_proc_reads() routes those descriptors by flag
+ * first, and refusing to wait for the rest of an unrecognised method would
+ * strand the connection (including axil_cmd_drop() for "PRI * HTTP/2.0"). */
+static size_t head_complete(const unsigned char *buf, size_t len)
+{
+	size_t i;
+
+	if (len < 4)
+		return 0;
+
+	/* Both CRLFCRLF and LFLF are accepted, as before. */
+	for (i = 0; i < len; i++) {
+		if (buf[i] != '\n')
+			continue;
+		if (i + 1 < len && buf[i + 1] == '\n')
+			return len;
+		if (i + 2 < len && buf[i + 1] == '\r' && buf[i + 2] == '\n')
+			return len;
+	}
+	return 0;
+}
+
+/* Move a partially received head out of the shared input buffer and into the
+ * descriptor so the next select() pass can resume from it. Returns 0 on
+ * success. */
+static int stash_head(struct descr *d, const unsigned char *buf, size_t len)
+{
+	unsigned char *tmp;
+	size_t want;
+
+	if (len > d->head_cap) {
+		/* Grow geometrically, like axil_rem_may_inc(): a client dribbling
+		 * a head in one-byte segments would otherwise realloc() on every
+		 * select() pass. Clamp to MAX_REQUEST_HEAD so the doubling
+		 * cannot overshoot the per-descriptor bound. */
+		want = d->head_cap ? d->head_cap * 2 : len;
+		if (want < len)
+			want = len;
+		if (want > MAX_REQUEST_HEAD)
+			want = MAX_REQUEST_HEAD;
+		tmp = realloc(d->head, want);
+		if (!tmp)
+			return -1;
+		d->head = tmp;
+		d->head_cap = want;
+	}
+	memcpy(d->head, buf, len);
+	d->head_len = len;
+	return 0;
+}
+
 inline static ssize_t axil_read(socket_t fd)
 {
 	char buf[BUFSIZ];
 	struct io *dio = &io[fd];
-	input_len = 0;
-	size_t ret;
-	size_t rounds = 0;
+	struct descr *d = &descr_map[fd];
+	ssize_t rd;
 
-	while (1)
-		switch ((ret = dio->read(fd, buf, sizeof(buf), 0))) {
-		case -1:
-		case 0:
-			return ret;
-		default:
-			if (input_len + ret >= input_size) {
-				size_t old_size = input_size;
-				input_size *= 2;
-				input_size += ret;
-				unsigned char *tmp = realloc(input, input_size);
-				if (!tmp) {
-					input_size = old_size;
-					return -1;
-				}
-				input = tmp;
+	input_len = 0;
+
+	/* Resume a head left over from an earlier select() pass. Dropped below
+	 * once a complete head has been assembled. */
+	if (d->head_len) {
+		if (d->head_len >= input_size) {
+			size_t old_size = input_size;
+			unsigned char *tmp;
+
+			input_size = d->head_len * 2 + 1;
+			tmp = realloc(input, input_size);
+			if (!tmp) {
+				input_size = old_size;
+				return -1;
 			}
-			memcpy(input + input_len, buf, ret);
-			input_len += ret;
-			if (ret < sizeof(buf) || ++rounds > 64)
-				return input_len;
+			input = tmp;
 		}
+		memcpy(input, d->head, d->head_len);
+		input_len = d->head_len;
+	}
+
+	while (1) {
+		rd = dio->read(fd, buf, sizeof(buf), 0);
+
+		/* A WebSocket frame is already a whole message: ws_read() does its
+		 * own reassembly, so appending a second frame would corrupt the
+		 * request. A -1 means the frame is still incomplete and the
+		 * descriptor must stay open for the rest to arrive. */
+		if (d->flags & DF_WEBSOCKET) {
+			d->head_len = 0;
+			return rd;
+		}
+
+		if (rd < 0) {
+			if (errno != EAGAIN && errno != EWOULDBLOCK)
+				return -1;
+
+			if (input_len > MAX_REQUEST_HEAD) {
+				errno = EMSGSIZE;
+				return -1;
+			}
+			/* Out of data mid-head. Report EAGAIN so the event loop keeps
+			 * the descriptor and comes back when the rest arrives. */
+			if (input_len > 0 && stash_head(d, input, input_len) == 0)
+				errno = EAGAIN;
+			return -1;
+		}
+		if (rd == 0) {
+			/* EOF. A head that never got its blank line is not a request
+			 * and must not be dispatched: cmd_new() walks to the
+			 * terminator looking for '\r', finds the NUL instead, and
+			 * points the body two bytes past it -- past anything a handler
+			 * can measure, since axil_handler_t takes a bare char *.
+			 * Returning 0 drops the buffer; descr_read()'s case 0 returns
+			 * -1 and the caller closes. */
+			d->head_len = 0;
+			if (input_len > 0 && head_complete(input, input_len))
+				return input_len;
+			return 0;
+		}
+
+		/* Bound the head before growing, not after: input_size doubles on
+		 * every overflowing read, so a client dribbling a head out without
+		 * a terminator would drive the shared buffer well past
+		 * MAX_REQUEST_HEAD before the 431 fired. */
+		if (input_len + (size_t)rd > MAX_REQUEST_HEAD) {
+			errno = EMSGSIZE;
+			return -1;
+		}
+
+		if (input_len + (size_t)rd >= input_size) {
+			size_t old_size = input_size;
+			unsigned char *tmp;
+
+			input_size *= 2;
+			input_size += (size_t)rd + 1;
+			tmp = realloc(input, input_size);
+			if (!tmp) {
+				input_size = old_size;
+				return -1;
+			}
+			input = tmp;
+		}
+		memcpy(input + input_len, buf, (size_t)rd);
+		input_len += (size_t)rd;
+		input[input_len] = '\0';
+
+		/* Accepted sockets are non-blocking (descr_new), so return as soon
+		 * as the head is complete instead of sleeping in a poll loop for
+		 * data that may never come. A request that arrives in one segment
+		 * therefore costs exactly one read. */
+		if (head_complete(input, input_len)) {
+			d->head_len = 0;
+			return input_len;
+		}
+	}
 }
 
 int axil_write(socket_t fd, void *data, size_t len)
@@ -938,11 +1164,40 @@ static int descr_read(socket_t fd)
 		if (errno == EAGAIN)
 			return 0;
 
+		/* axil_read() caps a partial head instead of stashing forever.
+		 * Answer here rather than in the read path: axil_respond()
+		 * closes the fd, and a -1 from descr_read would make the caller
+		 * close it a second time. */
+		if (errno == EMSGSIZE) {
+			/* A WebSocket frame has no HTTP response to give it: nobody is
+			 * listening for one, and axil_respond() drops the reply for
+			 * DF_WEBSOCKET anyway. Closing is the only way the peer learns
+			 * the frame was refused. */
+			if (d->flags & DF_WEBSOCKET)
+				return -1;
+
+			axil_respond_plain(fd, 431, "Request Header Fields Too Large");
+			return 0;
+		}
+
 		return -1;
 	/* case 0: return 0; */
 	case 0:
 		return -1;
 	}
+
+	/* A WebSocket frame is a message, not a request. axil_read() had to drain
+	 * it -- leaving it in the kernel buffer would make select() report the fd
+	 * readable forever and spin this loop -- but it deliberately does not copy
+	 * it into `input`. So parsing `input` here would re-dispatch the
+	 * *previous* request using this frame's length, and because the client
+	 * chooses that length it also chooses how much of the old request re-runs:
+	 * a 16-byte frame replays "GET /ws-...", a 5-byte one replays "GET " and
+	 * takes the connection down with it. The frame belongs to the module
+	 * through axil_ws_read(), which only happens once it has called
+	 * axil_fd_watch(). See SECURITY.md 1.1. */
+	if (d->flags & DF_WEBSOCKET)
+		return 0;
 
 	/* fprintf(stderr, "descr_read %d %d %s\n", d->fd, ret, input); */
 
@@ -995,6 +1250,14 @@ static void axil_raw_descr_reset(socket_t fd)
 	d->remaining_len = 0;
 	d->remaining_off = 0;
 
+	/* The memset() below would drop this pointer without freeing it. */
+	if (d->head) {
+		free(d->head);
+		d->head = NULL;
+	}
+	d->head_len = 0;
+	d->head_cap = 0;
+
 	d->resp_headers[0] = '\0';
 
 	if (d->env_hd) {
@@ -1035,6 +1298,22 @@ void axil_clear_active(socket_t cfd)
 	FD_CLR(cfd, &fds_active);
 }
 
+/* Classify the result of a read from a non-blocking descriptor:
+ *  1 = data was read
+ *  0 = end of stream, or a real error
+ * -1 = would block, so nothing happened and we should try again later
+ * Confusing EAGAIN with EOF closes healthy connections. */
+static inline int read_result(ssize_t n)
+{
+	if (n > 0)
+		return 1;
+	if (n == 0)
+		return 0;
+	if (errno == EAGAIN || errno == EWOULDBLOCK)
+		return -1;
+	return 0;
+}
+
 static inline void descr_proc_reads(void)
 {
 	for (register socket_t i = 0; i < FD_SETSIZE; i++) {
@@ -1068,8 +1347,14 @@ static inline void descr_proc_reads(void)
 		if (d->flags & DF_WS_WAITING) {
 			char buf[4096];
 			ssize_t n = dio->read(i, buf, sizeof(buf), 0);
+			int rr = read_result(n);
 
-			if (n <= 0) {
+			/* Nothing available yet: stay in the set and try again when
+			 * the socket becomes readable. Treating EAGAIN as EOF would
+			 * tear down a perfectly healthy proxy. */
+			if (rr < 0)
+				continue;
+			if (rr == 0) {
 				axil_tunnel_close_raw(i);
 				continue;
 			}
@@ -1101,12 +1386,23 @@ static inline void descr_proc_reads(void)
 			continue;
 		}
 
+		/* WS proxy: the client is waiting for the upstream's 101, so its
+		 * socket may already hold frames. Reading them here would parse
+		 * them as an HTTP request. Leave them in the kernel buffer until
+		 * axil_ws_tunnel() flips the pair to DF_TUNNEL, which clears
+		 * DF_WS_PROXY_PENDING. */
+		if (d->flags & DF_WS_PROXY_PENDING)
+			continue;
+
 		/* Raw tunnel mode */
 		if (d->flags & DF_TUNNEL) {
 			char buf[4096];
 			ssize_t n = dio->read(i, buf, sizeof(buf), 0);
+			int rr = read_result(n);
 
-			if (n <= 0) {
+			if (rr < 0)
+				continue;
+			if (rr == 0) {
 				axil_tunnel_close_raw(i);
 				continue;
 			}
@@ -2404,6 +2700,22 @@ static axil_handler_t *axil_match_pattern(
 	return best_handler;
 }
 
+/* Sleep for the given number of microseconds. select() with a zero descriptor
+ * count is the portable POSIX sleep; winsock rejects NULL sets, so it gets
+ * Sleep() instead. usleep() is not portable (and is gone from some systems). */
+static void axil_msleep(unsigned us)
+{
+#ifdef _WIN32
+	Sleep((us + 999) / 1000);
+#else
+	struct timeval tv;
+
+	tv.tv_sec = us / 1000000;
+	tv.tv_usec = us % 1000000;
+	select(0, NULL, NULL, NULL, &tv);
+#endif
+}
+
 /* Ensures the full POST body is present in the global `input` buffer.
  * Returns 0 on success, -1 if the request was rejected (caller must return). */
 static int
@@ -2429,11 +2741,32 @@ buffer_post_body(socket_t fd, int argc, char *argv[], size_t body_start)
 	size_t needed = headers_offset + body_start + 1 + content_length;
 	struct io *dio = &io[fd];
 
-	while (input_len < needed) {
+	/* A non-blocking socket may simply not have the rest of the body yet,
+	 * which used to be indistinguishable from a disconnect and killed the
+	 * request. Retry EAGAIN a bounded number of times: this runs inline on the
+	 * event loop, so it cannot wait indefinitely. A real EOF or error still
+	 * fails immediately.
+	 *
+	 * Only stalls count against the budget. Counting every read would cap
+	 * the body at 20 * BUFSIZ (~160 KiB) and silently truncate anything
+	 * bigger, since falling out of the loop used to return 0. The worst case
+	 * cost to the event loop stays 20 * 500 us = 10 ms; a handler that must
+	 * not block at all wants axil_respond_defer() instead. */
+	for (int stalls = 0; input_len < needed;) {
 		char buf[BUFSIZ];
 		ssize_t n = dio->read(fd, buf, sizeof(buf), 0);
-		if (n <= 0) {
+		if (n == 0) {
 			/* Client disconnected or lied about Content-Length */
+			axil_close(fd);
+			return -1;
+		}
+		if (n < 0) {
+			if ((errno == EAGAIN || errno == EWOULDBLOCK) &&
+			    stalls < MAX_BODY_STALL_RETRIES) {
+				stalls++;
+				axil_msleep(BODY_STALL_SLEEP_MS);
+				continue;
+			}
 			axil_close(fd);
 			return -1;
 		}
@@ -2455,6 +2788,20 @@ buffer_post_body(socket_t fd, int argc, char *argv[], size_t body_start)
 		memcpy(input + input_len, buf, n);
 		input_len += (size_t)n;
 	}
+
+	/* The handler only gets a bare `char *` (axil_handler_t): no length
+	 * argument, and axil exposes no content-length accessor, so strlen(body) is
+	 * the only length it can obtain. Terminate at the *declared* end, not at
+	 * input_len: a read never stops at Content-Length, so terminating there
+	 * would hand the handler whatever the final read overshot with. Those extra
+	 * bytes cost nothing to discard, since axil closes after every response.
+	 *
+	 * In bounds: the loop above exits only once input_len >= needed, and needed
+	 * is exactly this offset, so body_end <= input_len. axil_read() keeps
+	 * input_len < input_size, and the realloc above grows with room to spare. */
+	size_t body_end = headers_offset + body_start + 1 + content_length;
+
+	input[body_end] = '\0';
 
 	return 0;
 }
@@ -2582,7 +2929,9 @@ static void request_handle(socket_t fd, int argc, char *argv[], int req_flags)
 		socket_t upstream = ws_handler(fd);
 		if (upstream != INVALID_SOCKET) {
 #ifndef _WIN32
-			fcntl(upstream, F_SETFL, O_NONBLOCK);
+			int upfl = fcntl(upstream, F_GETFL, 0);
+			if (upfl != -1)
+				fcntl(upstream, F_SETFL, upfl | O_NONBLOCK);
 #endif
 
 			char ws_key[128];
@@ -2758,6 +3107,14 @@ ssize_t axil_ws_read(socket_t fd, void *buf, size_t len)
 
 int axil_ws_close(socket_t fd)
 {
+	/* ws_close() is void and cannot report this, so the bound is checked here
+	 * as well as inside ws_close_status(): the other three wrappers get it for
+	 * free because the functions they call return int. Without it, -1 from a
+	 * failed accept reached io[cfd].lower_write and frame_map[cfd]. */
+	if (fd < 0 || fd >= FD_SETSIZE) {
+		errno = EBADF;
+		return -1;
+	}
 	ws_close(fd);
 	return 0;
 }
@@ -2777,8 +3134,11 @@ static void axil_ws_tunnel(socket_t a, socket_t b)
 	struct descr *db = &descr_map[b];
 
 #ifndef _WIN32
-	fcntl(a, F_SETFL, O_NONBLOCK);
-	fcntl(b, F_SETFL, O_NONBLOCK);
+	int afl = fcntl(a, F_GETFL, 0), bfl = fcntl(b, F_GETFL, 0);
+	if (afl != -1)
+		fcntl(a, F_SETFL, afl | O_NONBLOCK);
+	if (bfl != -1)
+		fcntl(b, F_SETFL, bfl | O_NONBLOCK);
 #endif
 
 	FD_SET(a, &fds_active);
@@ -2975,10 +3335,20 @@ int axil_respond_file(socket_t fd, const char *path, const char *allowed_exts)
 	snprintf(len_buf, sizeof(len_buf), "%ld", (long)st.st_size);
 	axil_header_set(fd, "Content-Type", mime);
 	axil_header_set(fd, "Content-Length", len_buf);
-	axil_respond(fd, 200, NULL);
+
+	/* The body must be queued between respond_defer() and
+	 * respond_defer_done(). Passing NULL to axil_respond() instead sends the
+	 * headers as their own deferred response, so the body that follows is
+	 * dropped and the client sees a truncated 0-byte file. */
+	void *defer = axil_respond_defer(fd, 200);
+	if (!defer) {
+		free(buf);
+		return -1;
+	}
 	if (!(descr_map[fd].flags & DF_HEAD))
 		axil_write(fd, buf, (size_t)st.st_size);
 	free(buf);
+	axil_respond_defer_done(defer);
 	return 0;
 }
 
