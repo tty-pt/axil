@@ -122,16 +122,19 @@ struct ws_frame {
 } frame_map[FD_SETSIZE];
 
 /* Byte order helpers. htonl()/ntohl() are identity on a big-endian host, so
- * these need no conditional compilation. */
+ * these need no conditional compilation.
+ * Not named htonll()/ntohll(): Darwin defines those as macros in
+ * <sys/_endian.h>, so a static function of that name expands into its own
+ * declaration and fails to compile. */
 static uint64_t
-htonll(uint64_t v)
+ws_htonll(uint64_t v)
 {
 	uint32_t lo = (uint32_t)v, hi = (uint32_t)(v >> 32);
 	return ((uint64_t)htonl(lo) << 32) | htonl(hi);
 }
 
 static uint64_t
-ntohll(uint64_t v)
+ws_ntohll(uint64_t v)
 {
 	uint32_t lo = (uint32_t)v, hi = (uint32_t)(v >> 32);
 	return ((uint64_t)ntohl(lo) << 32) | ntohl(hi);
@@ -204,7 +207,7 @@ ws_write(socket_t cfd, void *data, io_size_t n, int flags UNUSED)
 	} else {
 		/* htonl() would byte-swap only the low word and leave the high word as
 		 * zero on a little-endian host. */
-		uint64_t nn = htonll(n);
+		uint64_t nn = ws_htonll(n);
 		hbuf[hlen++] = WS_LEN_64BIT;
 		memcpy(hbuf + hlen, &nn, sizeof(nn));
 		hlen += sizeof(nn);
@@ -427,7 +430,7 @@ ws_read(socket_t cfd, void *data, io_size_t len, int flags UNUSED)
 				return -1;
 			}
 			memcpy(&rpl, frame->len, sizeof(rpl));
-			pl = ntohll(rpl);
+			pl = ws_ntohll(rpl);
 		}
 
 		/* A 64-bit length is peer-controlled, so cap the allocation. */

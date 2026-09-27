@@ -1145,6 +1145,50 @@ static inline int cmd_parse(socket_t fd, char *cmd, size_t len)
 	return len;
 }
 
+/* Dispatch one WebSocket frame down the same path a raw request takes: a
+ * module gets first refusal through axil_parse(), and whatever it leaves over
+ * is a command line. Returns what descr_read() should return -- 0 to keep the
+ * connection, -1 to close it. */
+static int descr_read_ws(socket_t fd)
+{
+	ssize_t ret;
+
+	/* Read into the same shared `input` the raw path assembles heads in.
+	 * That buffer always has at least one spare byte -- axil_read() grows
+	 * input_size past input_len, and axil_ws_read() refuses any frame
+	 * larger than len - 1 -- so cmd_new()'s p[len] = '\0' lands in bounds.
+	 *
+	 * The payload is deliberately left unterminated. cmd_new() writes that
+	 * byte itself as its first act, and a module taking first refusal is
+	 * owed the frame's bytes exactly as they arrived, not clipped to a
+	 * terminator axil invented. */
+	ret = axil_ws_read(fd, input, input_size);
+	if (ret < 0) {
+		/* A frame still arriving is not an error: the descriptor stays
+		 * open and select() comes back when the rest of it lands. */
+		if (errno == EAGAIN || errno == EWOULDBLOCK)
+			return 0;
+
+		/* A frame larger than input_size - 1 is refused rather than
+		 * truncated, and a frame has no HTTP response to give it:
+		 * axil_respond() drops replies for DF_WEBSOCKET anyway. Closing
+		 * is the only way the peer learns, as in the raw path's EMSGSIZE
+		 * branch in descr_read() below. */
+		return -1;
+	}
+	if (ret == 0)
+		return -1; /* EOF, as in `case 0:` below */
+
+	/* Leave the shared buffer in the state the raw path would, for the POST
+	 * body reader's offset arithmetic against `input`. */
+	input_len = ret;
+
+	if (axil_parse && axil_parse(fd, input, (int)ret) < 0)
+		return 0;
+
+	return cmd_parse(fd, (char *)input, (size_t)ret);
+}
+
 static int descr_read(socket_t fd)
 {
 	struct descr *d = &descr_map[fd];
@@ -1157,6 +1201,24 @@ static int descr_read(socket_t fd)
 
 	if (!(d->flags & DF_ACCEPTED))
 		return 0;
+
+	/* A frame is handled before axil_read(), not after: on DF_WEBSOCKET that
+	 * path assembles the frame in a buffer of its own and returns only the
+	 * length, so the payload is already gone by the time we could look at it.
+	 * Reading the frame here instead is what makes the length and the bytes
+	 * come from one read -- with them paired, the hazard the old early return
+	 * documented cannot occur. See SECURITY.md 1.1. */
+	if (d->flags & DF_WEBSOCKET) {
+		/* A module claimed this socket with axil_fd_watch(), which makes
+		 * it the module's to read. The main loop keeps DF_EXTERN
+		 * descriptors out of here entirely (they go to axil_fd_tick), so
+		 * this is belt and braces -- but the ownership rule belongs next
+		 * to the read that would otherwise take it. */
+		if (d->flags & DF_EXTERN)
+			return 0;
+
+		return descr_read_ws(fd);
+	}
 
 	ret = axil_read(fd);
 	switch (ret) {
@@ -1185,19 +1247,6 @@ static int descr_read(socket_t fd)
 	case 0:
 		return -1;
 	}
-
-	/* A WebSocket frame is a message, not a request. axil_read() had to drain
-	 * it -- leaving it in the kernel buffer would make select() report the fd
-	 * readable forever and spin this loop -- but it deliberately does not copy
-	 * it into `input`. So parsing `input` here would re-dispatch the
-	 * *previous* request using this frame's length, and because the client
-	 * chooses that length it also chooses how much of the old request re-runs:
-	 * a 16-byte frame replays "GET /ws-...", a 5-byte one replays "GET " and
-	 * takes the connection down with it. The frame belongs to the module
-	 * through axil_ws_read(), which only happens once it has called
-	 * axil_fd_watch(). See SECURITY.md 1.1. */
-	if (d->flags & DF_WEBSOCKET)
-		return 0;
 
 	/* fprintf(stderr, "descr_read %d %d %s\n", d->fd, ret, input); */
 
