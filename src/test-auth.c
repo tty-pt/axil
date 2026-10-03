@@ -11,9 +11,12 @@
 #endif
 
 /* T7 (change 4): counts disconnects so the shell test can assert that
- * axil_disconnect() is reachable for an authenticated HTTP request.
- * libaxil.c:413 only calls it when DF_CONNECTED is set, and at HEAD nothing
- * ever set DF_CONNECTED for HTTP, so the hook was dead. */
+ * axil_disconnect() is reachable. It used to be gated on DF_CONNECTED (and then
+ * on DF_AUTHENTICATED in axil_disconnect()), so it never fired for an
+ * unauthenticated request -- which meant a module that had attached a pty to one
+ * could never clean it up, and its fd-keyed state outlived the connection.
+ * SECURITY.md S5.4. Both gates are gone; the count now includes
+ * unauthenticated requests, which is the point. */
 static int disconnects;
 
 void
@@ -196,10 +199,11 @@ auth_badfd_handler(socket_t fd, char *body)
 }
 #endif /* !_WIN32 */
 
-/* T7 (change 4): reports the disconnect count. libaxil.c:413 only calls
- * axil_disconnect() when DF_CONNECTED is set, and this probe is itself
- * unauthenticated, so the number it reports reflects authenticated requests
- * only. */
+/* T7 (change 4): reports the disconnect count, including for this connection.
+ * Both the DF_CONNECTED and DF_AUTHENTICATED gates are gone (SECURITY.md S5.4),
+ * so an unauthenticated request such as this one bumps it. That is exactly the
+ * behaviour under test: a module may hold a pty on an unauthenticated terminal,
+ * so teardown cannot be conditional on auth. */
 static int
 auth_disconnect_handler(socket_t fd, char *body)
 {

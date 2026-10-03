@@ -321,14 +321,25 @@ note_server "$auth_pid"
 
 if wait_for_port_tcp "$auth_port"; then
 	if command -v curl >/dev/null 2>&1; then
-		# T7 (change 4): libaxil.c:413 only calls axil_disconnect() when
-		# DF_CONNECTED is set, and at HEAD nothing ever set it for HTTP, so
-		# the hook was dead. Probe the count *before* any authenticated
-		# request: an unauthenticated one must not bump it.
+		# T7 (change 4): axil_disconnect() must fire for an *unauthenticated*
+		# request. It used to be gated on DF_CONNECTED and then on
+		# DF_AUTHENTICATED, so it fired for neither -- which meant a module that
+		# had attached a pty and a child shell to a raw terminal could never
+		# clean it up, and its fd-keyed state outlived the connection and landed
+		# on the next one (SECURITY.md S5.4). Poll rather than sample once: the
+		# count is read while this request is still open, so the bump for the
+		# previous connection has to have landed already.
 		assert_contains auth-none "auth none" sh -c "curl -sS --max-time 2 http://127.0.0.1:$auth_port/"
-		before=$(curl -sS --max-time 2 "http://127.0.0.1:$auth_port/disconnects" | tr -d '[:space:]')
-		[ "$before" = "0" ] || {
-			echo "Test FAILED! auth-disconnect: unauthenticated request fired the hook ($before)" >&2
+		tries=50
+		before=0
+		while [ $tries -gt 0 ]; do
+			before=$(curl -sS --max-time 2 "http://127.0.0.1:$auth_port/disconnects" | tr -d '[:space:]')
+			[ "$before" -ge 1 ] 2>/dev/null && break
+			tries=$((tries - 1))
+			sleep 0.1
+		done
+		[ "$before" -ge 1 ] 2>/dev/null || {
+			echo "Test FAILED! auth-disconnect: hook never fired for an unauthenticated request ($before)" >&2
 			exit 1
 		}
 

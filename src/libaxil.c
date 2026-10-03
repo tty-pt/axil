@@ -114,6 +114,11 @@
 
 struct descr descr_map[FD_SETSIZE] AXIL_HIDDEN;
 
+/* Source of per-connection generations for struct descr.generation. Never
+ * reused or wrapped in practice: it is bumped once per accept, and an
+ * unsigned long long at a million accepts a second still takes ~585k years. */
+static unsigned long long conn_generation;
+
 struct cmd {
 	int fd;
 	int argc;
@@ -437,7 +442,14 @@ void axil_close(socket_t fd)
 
 	d->resp_headers[0] = '\0';
 
-	if ((d->flags & DF_CONNECTED) && axil_disconnect)
+	/* Unconditional. This used to be gated on DF_CONNECTED, which is only set
+	 * by a WebSocket upgrade (axil_ws_upgrade) or axil_auth(), so every other
+	 * descriptor -- including any connection a module had given a pty and a
+	 * child shell to -- was torn down without ever reaching the hook. The
+	 * kernel reuses fd numbers, so module state keyed by fd outlived its
+	 * connection and landed on the next one. axil.h states this hook fires
+	 * whenever a descriptor is torn down; this is that. SECURITY.md S5.4. */
+	if (axil_disconnect)
 		axil_disconnect(fd);
 
 	if (d->flags & DF_WEBSOCKET)
@@ -803,6 +815,10 @@ static void descr_new(int ssl)
 	dio = &io[fd];
 	memset(d, 0, sizeof(struct descr));
 	memset(dio, 0, sizeof(struct io));
+	/* New identity for this slot. The memset above just zeroed it, and fd
+	 * numbers are reused, so a module holding state keyed by fd from a previous
+	 * connection cannot be told apart from this one by the number alone. */
+	d->generation = ++conn_generation;
 	/* frame_map is keyed by fd number and is not part of struct descr, so the
 	 * memsets above do not touch it. A closed WebSocket that still held a
 	 * partially received frame would otherwise leave frame_map[fd].data
@@ -3236,6 +3252,11 @@ void do_DELETE(socket_t fd, int argc, char *argv[])
 int axil_flags(socket_t fd)
 {
 	return descr_map[fd].flags;
+}
+
+unsigned long long axil_generation(socket_t fd)
+{
+	return descr_map[fd].generation;
 }
 
 void axil_set_flags(socket_t fd, int flags)

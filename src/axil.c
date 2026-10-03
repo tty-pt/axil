@@ -309,9 +309,14 @@ int axil_connect(socket_t fd) {
 }
 
 void axil_disconnect(socket_t fd) {
-	if (!(axil_flags(fd) & DF_AUTHENTICATED))
-		return;
-
+	/* No DF_AUTHENTICATED gate here on purpose. A module can attach a pty and
+	 * spawn a child to an *unauthenticated* descriptor (a raw telnet terminal,
+	 * a /tty GET), so gating teardown on authentication means a connection that
+	 * holds a pty and a live child can never be cleaned up. The kernel then
+	 * recycles the fd to an unrelated request, and the module's fd-keyed state
+	 * -- plus the pty itself -- silently attaches to it. Modules self-gate: they
+	 * return early for a descriptor they do not own. See axil.h for the contract
+	 * and SECURITY.md finding S5.4. */
 	on_axil_disconnect(fd);
 }
 
