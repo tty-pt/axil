@@ -1,4 +1,47 @@
-## 1.4.0
+## 1.5.0
+
+- **Teardown is ungated: an unauthenticated connection is now cleaned up.**
+  `axil_disconnect()` no longer requires `DF_AUTHENTICATED` and `axil_close()`
+  no longer requires `DF_CONNECTED`. The two gates contradicted the documented
+  contract ("fires whenever a descriptor is torn down") and their net effect
+  was unauthenticated RCE as the server user: a connection that owned a PTY but
+  was never authenticated — a raw telnet terminal, a non-upgraded `/tty` — was
+  never cleaned up, so its PTY, live child and `mux_state` entry outlived it,
+  the kernel recycled the fd number onto an unrelated request, and
+  `axil_tty_input()` wrote that request's bytes straight into the leaked
+  shell's PTY (the HTTP headers-as-commands symptom in SECURITY.md S5.4).
+  Every hook now self-gates on the descriptors it does not own, which is what
+  the header contract already required of them. The old leak mechanics are
+  kept as a regression: an AUTHENTICATED PTY connection killed abruptly must
+  still leave no live child, no PTY master, and clean HTTP on recycled fds.
+- **Per-connection generation: `axil_generation()`.** `struct descr` grows a
+  monotonic generation bumped on every accept, so fd-keyed module state can
+  reject stale entries. axil-tty's `mux_state` and NAWS entry carry it and
+  `mux_get()`/`mux_wsz_get()` refuse a mismatch — even a leaked entry is inert
+  on a recycled descriptor, which closes the whole class rather than the one
+  instance above.
+- **`DF_AUTH_AUTO` (flag 4096): `-A` publishes an identity, it does not prove
+  one.** `AXIL_AUTOAUTH` authenticates every connection as the server's own
+  account, so under `-A` a name comparison cannot tell an asserted identity
+  from a published one. The flag is set only by `AXIL_AUTOAUTH` (so it cannot
+  survive descriptor reuse), `drop_priviledges()` refuses to spawn a child
+  under it — a child would otherwise run as the operator while the request
+  proved nothing — and any downstream authorization that trusts `REMOTE_USER`
+  must refuse a descriptor carrying it (SECURITY.md S5.8).
+- **`FD_VALID(fd)` before any `[FD_SETSIZE]` table.** One macro, checked
+  before the first index rather than after the frame has already been touched,
+  covering `descr_map`, `io`, `frame_map` and `ws_flags`; on Windows
+  `socket_t` is the unsigned `SOCKET`, so `>= 0` would be a tautology and
+  `INVALID_SOCKET` (~0) is rejected by the `< FD_SETSIZE` half. Accept now
+  spells the sentinel out (`fd == INVALID_SOCKET || fd == 0`) instead of the
+  `fd <= 0` test that never fires for an unsigned ~0, and every teardown path
+  closes with `axil_sock_close()` (`closesocket()` on Winsock) instead of
+  `close()` on a CRT fd.
+- **Tests**: `test-auth`, `test.sh` and `test-ws.py` gain the teardown,
+  recycled-fd, `DF_AUTH_AUTO` and `FD_VALID` assertions; `SECURITY.md` records
+  S5.4 and S5.5.
+
+## [1.4.0]
 
 - **Renamed `libndc` → `axil`**: the `ndc_*` API and `include/ttypt/ndc.h` became `axil_*` / `include/ttypt/axil.h` (`ndc.pc` → `axil.pc`, lib renamed accordingly). XY hooks are now `axil_*` (`on_axil_exit`, `on_axil_vim`, `on_axil_command`, `on_axil_connect`, `on_axil_disconnect`, `on_axil_tick`, `on_axil_parse` in `include/ttypt/axil-xy.h`).
 - **Unified request-parameter API**: `axil_req_param(fd, body, name, buf, len)` plus `_int`/`_bool` variants read a parameter from a URL-encoded form body or the query string in a single call (handles quoted values); `axil_param`/`axil_param_int`/`axil_param_bool` cover the query-string path, with support for special characters in the URL.
