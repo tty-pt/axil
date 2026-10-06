@@ -9,7 +9,7 @@ LDLIBS-libaxil-Linux := -lc
 LDLIBS-libaxil-Windows := -lws2_32 -liconv
 LDLIBS-axil := -laxil -lxylem -lqsys
 LDLIBS-test := -laxil
-LDLIBS-test-auth := -laxil -lqsys
+LDLIBS-test-auth := -laxil -lqsys -lxylem
 LDLIBS-test-routes := -laxil -lcrypto
 # The only OpenSSL use in test-routes is the WebSocket upstream child, which is
 # #ifndef _WIN32, and mingw has no -lcrypto.

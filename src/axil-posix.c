@@ -360,7 +360,7 @@ int axil_auth(socket_t fd, char *username)
 	 * the same reason: descr_map[] is [FD_SETSIZE] and this indexes it with
 	 * whatever it is handed. Found by reading this function while fixing the
 	 * line below it, not by the finding that asked for it. */
-	if (fd < 0 || fd >= FD_SETSIZE) {
+	if (!FD_VALID(fd)) {
 		errno = EBADF;
 		return -1;
 	}
@@ -406,6 +406,19 @@ static struct passwd *drop_priviledges(socket_t fd)
 	struct descr *d = &descr_map[fd];
 	int euid = geteuid();
 
+	/* -A publishes the server's own identity on every descriptor, so a child
+	 * spawned here would run as the operator while the request proved nothing.
+	 * That is exactly what DF_AUTH_AUTO exists to stop: refuse rather than run
+	 * under a published identity. Genuinely unauthenticated descriptors keep
+	 * the long-standing server-identity behaviour below (axil.h documents it);
+	 * there is no identity to resolve for them, and the caller names an
+	 * explicit program rather than a login shell. */
+	if (d->flags & DF_AUTH_AUTO) {
+		WARN("drop_priviledges %d: refusing child under -A-published identity\n",
+		     fd);
+		return NULL;
+	}
+
 	struct passwd *pw = (d->flags & DF_AUTHENTICATED) ? &d->pw : &axil_pw;
 
 	if (!axil_config.chroot) {
@@ -439,7 +452,8 @@ static inline int popen2(socket_t cfd, char *const args[])
 		return p;
 
 	if (p == 0) { /* child */
-		drop_priviledges(cfd);
+		if (!drop_priviledges(cfd))
+			_exit(1);
 		do_cleanup = 0;
 		close(pipe_stdin[1]);
 		dup2(pipe_stdin[0], 0);

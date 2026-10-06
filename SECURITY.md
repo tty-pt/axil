@@ -6,7 +6,20 @@ code cites them; earlier entries in the series live with the audit, not here.
 
 ## S5.4 — fd-keyed PTY state + doubly-gated disconnect hook → unauthenticated RCE
 
-**Status:** fixed (Layers 1–3 below), regression-covered by `axil-nd/test.sh` §S5.4.
+**Status:** fixed (Layers 1–3 below). Re-scoped: an unauthenticated terminal no
+longer spawns a shell at all — it is refused before the PTY is born
+(S5.6–S5.8) — so the original shape (spawn-then-check-cleanup on an anonymous
+connection) cannot exist any more. What the regression still covers, in
+`axil-nd/test.sh` §S5.4 and `axil-tty/test.sh`:
+- the new property: an unauthenticated `/tty` yields no PTY, no child, no
+  output — only a refusal line, a close, and a log entry;
+- the retained regression: an AUTHENTICATED PTY connection, killed abruptly,
+  still cleans up (no live child, no PTY master), and recycled fds still serve
+  clean HTTP.
+
+The leak mechanics below are unchanged history: they describe what the old
+code did, and why the teardown must stay ungated even though nothing
+unauthenticated can hold a PTY any more.
 
 A PTY and its spawned `sh` live in axil-tty's `struct mux_state`, keyed by raw
 file-descriptor number in a process-global map (`mux_get()`,
@@ -68,3 +81,56 @@ axil-tty's own `on_axil_parse`). WebSocket frame payloads are exempt in axil-tty
 because shell bytes ride frames and must still reach the PTY. Segmented bodies
 never reach the hooks at all (`buffer_post_body()` reads them directly), so the
 single-chunk case was the whole bug.
+
+## S5.6 — `axil_get_pw` substitutes the server's identity for strangers
+
+**Status:** fixed in axil-tty (identity resolved fresh per request, never from
+`axil_get_pw`); guarded in axil core (`drop_priviledges` refuses `-A`).
+
+`axil_auth()` (`src/axil-posix.c`) marks every connection `DF_AUTHENTICATED` —
+even for a name `getpwnam()` does not know, in which case it copies the
+server's own entry over the descriptor — and `axil_get_pw()` hands that entry
+back for any *un*authenticated descriptor. Three places in axil-tty treated the
+substitution as the caller's identity: `drop_priviledges()` fell back to the
+server-user entry, the PTY child re-queried it and fell back again, and an
+empty `pw_shell` became `"/bin/sh"`. No-shell accounts (`/bin/false`, empty)
+were inexpressible: every path led to a real shell as the server user.
+
+The substitution itself stays (it is documented in `axil.h`, and genuinely
+unauthenticated callers such as proxy upstreams have no other identity). What
+changed is who may consult it: terminal spawning resolves the identity itself
+— `-A` flag clear, `REMOTE_USER` set, `getpwnam()` hit, real shell — and
+anything else is refused before any allocation. Axil core's second
+`drop_priviledges` (same file, reached from `popen2()`) refuses a
+`-A`-published identity for the same reason rather than running a child under
+a published name.
+
+## S5.7 — `do_man` path traversal and flag injection
+
+**Status:** fixed, regression-covered by `axil-nd/test.sh` (traversal,
+`--pager=`, `-K` all refused).
+
+`do_man()` (`external/axil-nd/src/world.c`, shared by `man` and `help`) passed
+its topic into two `execve` argument vectors: interpolated into
+`man/<topic>.10` for `man -l` (which preprocesses through `cat`: an
+arbitrary-file read bounded only by the `.10` suffix), and, when that file was
+absent, as a bare positional to `man` (a leading dash made it a flag: `-K`,
+`--pager=`). Topics containing `/` or `..` or beginning with `-` are now
+refused before any spawn — legitimate topics are bare command names.
+
+## S5.8 — `-A` publishes the operator's identity to every connection
+
+**Status:** contained by provenance flag `DF_AUTH_AUTO`, regression-covered by
+`external/axil/test.sh` (set under `-A` after upgrade, clear otherwise,
+pre-existing flag bits preserved) and the refusal suites.
+
+Under `AXIL_AUTOAUTH`, `axil_connect()` authenticates every WebSocket upgrade
+as the server's own account. `DF_AUTHENTICATED` alone therefore cannot
+distinguish a proven identity from a published one — and neither can a name
+comparison, because the published name literally IS the operator's own passwd
+name. `DF_AUTH_AUTO` (`include/ttypt/axil.h`) marks descriptors whose identity
+came from `-A`; it is set in the library upgrade path (so library-linked hosts
+get it too, not just the axil binary's weak `axil_connect`), preserved across
+the assigning `axil_set_flags()`, and cleared on accept with everything else
+so it cannot survive fd reuse. Terminal spawning refuses it with its own
+message; it is never merely one factor among others.

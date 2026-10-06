@@ -65,6 +65,13 @@
 #define INVALID_SOCKET -1
 #endif
 
+/* Sockets need closesocket() on Winsock; close() only works for CRT fds. */
+#ifdef _WIN32
+#define axil_sock_close(fd) closesocket(fd)
+#else
+#define axil_sock_close(fd) close(fd)
+#endif
+
 #include <sys/stat.h>
 #include <sys/time.h>
 #include <sys/types.h>
@@ -472,7 +479,7 @@ void axil_close(socket_t fd)
 	}
 
 	shutdown(fd, 2);
-	close(fd);
+	axil_sock_close(fd);
 
 	tunnel_pair[fd] = INVALID_SOCKET;
 
@@ -781,15 +788,17 @@ static void descr_new(int ssl)
 {
 	struct sockaddr_in addr;
 	socklen_t addr_len = (socklen_t)sizeof(addr);
-	int fd = accept(
+	socket_t fd = accept(
 	        ssl ? srv_ssl_fd : srv_fd, (struct sockaddr *)&addr, &addr_len);
 	struct descr *d;
 	struct io *dio;
 
-	if (fd <= 0)
+	/* INVALID_SOCKET (~0) only survives "fd <= 0" once socket_t is the
+	 * unsigned Windows SOCKET, so spell the sentinel out. */
+	if (fd == INVALID_SOCKET || fd == 0)
 		return;
 	if (fd >= FD_SETSIZE) {
-		close(fd);
+		axil_sock_close(fd);
 		return;
 	}
 
@@ -833,7 +842,7 @@ static void descr_new(int ssl)
 	d->remaining_size = BUFSIZ * 1024;
 	d->remaining = malloc(d->remaining_size);
 	if (!d->remaining) {
-		close(fd);
+		axil_sock_close(fd);
 		FD_CLR(fd, &fds_active);
 		return;
 	}
@@ -877,7 +886,7 @@ static void axil_upstream_descr_init(socket_t fd)
 	d->remaining_size = BUFSIZ * 1024;
 	d->remaining = malloc(d->remaining_size);
 	if (!d->remaining) {
-		close(fd);
+		axil_sock_close(fd);
 		return;
 	}
 	d->epid = 0;
@@ -1332,7 +1341,7 @@ static void axil_raw_descr_reset(socket_t fd)
 	}
 
 	shutdown(fd, 2);
-	close(fd);
+	axil_sock_close(fd);
 
 	tunnel_pair[fd] = INVALID_SOCKET;
 
@@ -3006,7 +3015,7 @@ static void request_handle(socket_t fd, int argc, char *argv[], int req_flags)
 			{
 				fprintf(stderr,
 				        "WS: no Sec-WebSocket-Key header\n");
-				close(upstream);
+				axil_sock_close(upstream);
 			} else {
 				char req_buf[2048];
 				int len = snprintf(
@@ -3021,12 +3030,12 @@ static void request_handle(socket_t fd, int argc, char *argv[], int req_flags)
 				        argv[0], argv[1], ws_key);
 
 				if (len <= 0 || len >= (int)sizeof(req_buf)) {
-					close(upstream);
+					axil_sock_close(upstream);
 					return;
 				}
 
 				if (upstream >= FD_SETSIZE) {
-					close(upstream);
+					axil_sock_close(upstream);
 					return;
 				}
 
@@ -3135,6 +3144,28 @@ void axil_ws_handler(char *path, axil_ws_upstream_t handler)
 	corm_put(ws_hd, path, &handler);
 }
 
+/* Apply -A in the library, not only in the axil executable's weak
+ * axil_connect(). Library-linked hosts otherwise upgrade without any provenance
+ * mark, even though DF_AUTH_AUTO is the only thing that distinguishes a
+ * published server identity from a proven one. Idempotent: callers and the
+ * executable's axil_connect() may both run it for the same descriptor. */
+static void
+axil_autoauth_apply(socket_t fd)
+{
+	if (!(axil_config.flags & AXIL_AUTOAUTH))
+		return;
+
+#ifndef _WIN32
+	struct passwd *pw = getpwuid(geteuid());
+	axil_auth(fd, pw ? pw->pw_name : "root");
+#else
+	axil_auth(fd, "root");
+#endif
+
+	if (FD_VALID(fd))
+		axil_set_flags(fd, axil_flags(fd) | DF_AUTH_AUTO);
+}
+
 int axil_ws_upgrade(socket_t fd)
 {
 	struct descr *d = &descr_map[fd];
@@ -3154,6 +3185,7 @@ int axil_ws_upgrade(socket_t fd)
 	dio->read = ws_read;
 	dio->write = ws_write;
 
+	axil_autoauth_apply(fd);
 	if (!axil_connect || axil_connect(fd))
 		d->flags |= DF_CONNECTED;
 
@@ -3176,7 +3208,7 @@ int axil_ws_close(socket_t fd)
 	 * as well as inside ws_close_status(): the other three wrappers get it for
 	 * free because the functions they call return int. Without it, -1 from a
 	 * failed accept reached io[cfd].lower_write and frame_map[cfd]. */
-	if (fd < 0 || fd >= FD_SETSIZE) {
+	if (!FD_VALID(fd)) {
 		errno = EBADF;
 		return -1;
 	}

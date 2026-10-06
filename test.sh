@@ -418,6 +418,19 @@ if wait_for_port_tcp "$auth_port"; then
 			echo "Test FAILED! auth-disconnect: hook never fired for an authenticated request" >&2
 			exit 1
 		}
+
+		# Without -A there is no published identity, so DF_AUTH_AUTO must be
+		# clear even though axil_auth_check() may still have resolved a cookie.
+		# Observed after an upgrade, which is where -A would act.
+		off=$(python3 ./test-ws.py "$auth_port" --flags | sed -n 's/^wsflags //p')
+		case "$off" in
+		*"auto=0"*)
+			;;
+		*)
+			echo "Test FAILED! auth-autoauth-off: expected DF_AUTH_AUTO clear without -A, got '$off'" >&2
+			exit 1
+			;;
+		esac
 	else
 		echo "Skipping auth HTTP checks: curl not found" >&2
 	fi
@@ -428,6 +441,44 @@ else
 fi
 
 kill "$auth_pid" >/dev/null 2>&1 || true
+
+# With -A every connection is authenticated as the server's own account. Both
+# DF_AUTHENTICATED and DF_AUTH_AUTO must be set, and the pre-existing bits must
+# survive: axil_set_flags() assigns rather than ors, so dropping the or would
+# clear DF_CONNECTED and remove the descriptor from iteration.
+if command -v python3 >/dev/null 2>&1; then
+	autoauth_port=$(free_port $((port + 12)))
+	$testauth -p "$autoauth_port" -C "$auth_dir" -A >/dev/null 2>&1 &
+	autoauth_pid=$!
+	note_server "$autoauth_pid"
+
+	if wait_for_port_tcp "$autoauth_port"; then
+		on=$(python3 ./test-ws.py "$autoauth_port" --flags | sed -n 's/^wsflags //p')
+		case "$on" in
+		*"auto=1"*"auth=1"*) ;;
+		*)
+			echo "Test FAILED! auth-autoauth-on: expected DF_AUTH_AUTO and DF_AUTHENTICATED set under -A, got '$on'" >&2
+			exit 1
+			;;
+		esac
+
+		# The descriptor must still be dispatched, i.e. DF_CONNECTED survived
+		# the flag write rather than being cleared by the assignment.
+		after=$(curl -sS --max-time 2 "http://127.0.0.1:$autoauth_port/disconnects" | tr -d '[:space:]')
+		[ "${after:-0}" -ge 1 ] 2>/dev/null || {
+			echo "Test FAILED! auth-autoauth-conn: request was not dispatched (DF_CONNECTED lost), disconnects='$after'" >&2
+			exit 1
+		}
+	else
+		echo "test-auth -A failed to listen on $autoauth_port" >&2
+		kill "$autoauth_pid" >/dev/null 2>&1 || true
+		exit 1
+	fi
+
+	kill "$autoauth_pid" >/dev/null 2>&1 || true
+else
+	echo "Skipping -A auth checks: python3 not found" >&2
+fi
 
 route_port=$(free_port $((port + 15)))
 route_dir=$(mktemp -d)

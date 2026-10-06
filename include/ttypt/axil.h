@@ -29,6 +29,17 @@ typedef SOCKET socket_t;
 typedef int socket_t;
 #endif
 
+/* Bounds for every [FD_SETSIZE]-indexed table (descr_map, io, frame_map,
+ * ws_flags). The check has to come before the first index, not after the
+ * frame has already been touched. On Windows socket_t is the unsigned
+ * SOCKET, so ">= 0" would be a tautology; INVALID_SOCKET (~0) is rejected
+ * by the "< FD_SETSIZE" half instead. */
+#ifdef _WIN32
+#define FD_VALID(fd) ((fd) < FD_SETSIZE)
+#else
+#define FD_VALID(fd) ((fd) >= 0 && (fd) < FD_SETSIZE)
+#endif
+
 /** Max key size for request environment. */
 #define ENV_KEY_LEN 128
 /** Maximum environment string size. */
@@ -60,6 +71,12 @@ enum descr_flags {
 	DF_HEAD = 1024,
 	/** Response deferred: headers sent, body pending axil_respond_defer_finish/done. */
 	DF_DEFERRED = 2048,
+	/** The identity in REMOTE_USER was published by AXIL_AUTOAUTH (-A), not
+	 *  asserted by a user. -A authenticates every connection as the server's own
+	 *  account, so any downstream authorization that trusts REMOTE_USER must
+	 *  refuse a descriptor carrying this flag. Set only by AXIL_AUTOAUTH, so it
+	 *  cannot survive descriptor reuse. */
+	DF_AUTH_AUTO = 4096,
 };
 
 /** Server configuration flags. */

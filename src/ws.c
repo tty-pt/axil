@@ -37,10 +37,6 @@
 #define WS_CLOSE_POLICY_VIOLATION 1008
 /* FIN set on opcode 8: a complete, unfragmented close frame. */
 #define WS_FIN_CLOSE 0x88
-/* Every array this file indexes is [FD_SETSIZE]: frame_map[], ws_flags[], and
- * (in libaxil.c) descr_map[] and io[]. The check has to come before the first
- * index, not after the frame has already been touched. */
-#define FD_VALID(fd) ((fd) >= 0 && (fd) < FD_SETSIZE)
 
 /* Defined below, in libaxil.c, which includes this file first. */
 static io_ssize_t axil_low_write(socket_t fd, void *from, io_size_t len, int flags);

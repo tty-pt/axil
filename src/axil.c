@@ -303,6 +303,14 @@ int axil_connect(socket_t fd) {
 #else
 		axil_auth(fd, "root");
 #endif
+		/* Record that the identity above was published rather than proven.
+		 * axil_auth() sets DF_AUTHENTICATED, so without this a descriptor
+		 * would be indistinguishable from a genuinely authenticated one --
+		 * and under -A the name is literally the operator's own, so even a
+		 * name comparison cannot tell them apart. axil_set_flags() assigns
+		 * rather than ors, so the existing bits must be preserved. */
+		if (FD_VALID(fd))
+			axil_set_flags(fd, axil_flags(fd) | DF_AUTH_AUTO);
 	}
 	on_axil_connect(fd);
 	return !!(axil_config.flags & AXIL_AUTOAUTH);
