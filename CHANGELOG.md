@@ -1,3 +1,19 @@
+## Unreleased
+
+- **Framed responses: `Content-Length` + `Connection: close` on every
+  `axil_respond()`.** Responses previously carried no body framing, so a
+  client could only delimit the body by connection close -- over TLS that
+  requires `close_notify`, which was never sent either. Strict clients
+  (OpenSSL 3.5+, current browsers) discarded such responses as truncated,
+  taking `Set-Cookie` with them (observed live: a login 303 that neither
+  logged in nor errored). 1xx/204/304 stay length-free per RFC 9110, and
+  the 101 upgrade path bypasses `axil_respond()` untouched. Explicitly set
+  lengths are respected, never duplicated.
+- **Best-effort TLS `close_notify` on teardown.** `axil_ssl_drop()` now
+  runs up to two non-blocking `SSL_shutdown()` calls before `SSL_free()`,
+  so the FIN is preceded by `close_notify` and a fully received response
+  is accepted instead of discarded.
+
 ## 1.5.0
 
 - **Teardown is ungated: an unauthenticated connection is now cleaned up.**

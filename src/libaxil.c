@@ -289,6 +289,23 @@ void axil_respond(socket_t fd, int code, const char *body)
 	axil_default_response_headers(fd);
 
 	size_t body_len = (body && !(d->flags & DF_HEAD)) ? strlen(body) : 0;
+
+	/* Framing: without Content-Length the peer can only delimit the body
+	 * by connection close, and over TLS that requires close_notify --
+	 * without either, strict clients (OpenSSL 3.5+, current browsers)
+	 * discard the response as truncated, taking Set-Cookie with it
+	 * (observed live: a login 303 that neither logged in nor errored).
+	 * 1xx/204/304 carry no body by definition, so no length is stated;
+	 * anything else always closes (DF_TO_CLOSE below), hence the
+	 * Connection header too. */
+	axil_header_set_default(fd, "Connection", "close");
+	if ((code < 100 || code >= 200) && code != 204 && code != 304) {
+		char len_buf[32];
+		snprintf(len_buf, sizeof(len_buf), "%lu",
+		         (unsigned long)body_len);
+		axil_header_set_default(fd, "Content-Length", len_buf);
+	}
+
 	char hdr[4096];
 	int hlen = snprintf(
 	        hdr, sizeof(hdr), "HTTP/1.1 %d %s\r\n%s\r\n", code,
@@ -405,6 +422,20 @@ static void axil_ssl_drop(struct descr *d)
 {
 	if (!d->cSSL)
 		return;
+	/* Best-effort close_notify first: tearing TLS down with a bare
+	 * shutdown()/close() leaves strict clients (OpenSSL 3.5+, current
+	 * browsers) reporting truncation and discarding the response they
+	 * already received -- observed live as a login 303 + Set-Cookie
+	 * that never took effect. Non-blocking: at most two SSL_shutdown
+	 * calls, never wait on the peer. */
+	for (int i = 0; i < 2; i++) {
+		int r = SSL_shutdown(d->cSSL);
+		if (r == 1)
+			break;
+		int e = SSL_get_error(d->cSSL, r);
+		if (e != SSL_ERROR_WANT_READ && e != SSL_ERROR_WANT_WRITE)
+			break;
+	}
 	SSL_free(d->cSSL);
 	d->cSSL = NULL;
 }
