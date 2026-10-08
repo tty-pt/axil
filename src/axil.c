@@ -139,6 +139,19 @@ void exit_all(int i) {
 		exit(i);
 }
 
+/* A fault must not be able to pose as a clean shutdown: exit_all() closes the
+ * log, syncs and returns, which is how a null dispatch on a successful login
+ * took the daemon down without a single trace. Log the signal, put the default
+ * handler back and re-raise so the kernel writes the core. */
+static void
+segv_fault(int sig) {
+	signal(sig, SIG_DFL);
+	qsys_syslog(QLOG_ERR, "fatal signal %d -- dumping core", sig);
+	qsys_closelog();
+	raise(sig);
+	_exit(128 + sig);
+}
+
 void
 usage(char *prog) {
 	fprintf(stderr, "Usage: %s [-Adr?] [-C PATH] [-k CERT] [-K PATH] [-p PORT] [-s PORT] [-B BYTES] [-m MODS]\n", prog);
@@ -205,7 +218,7 @@ main(int argc, char *argv[])
 	}
 #endif
 
-	signal(SIGSEGV, exit_all);
+	signal(SIGSEGV, segv_fault);
 
 	srand(getpid());
 
