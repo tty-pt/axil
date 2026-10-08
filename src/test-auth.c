@@ -25,6 +25,18 @@
  * unauthenticated requests, which is the point. */
 static int disconnects;
 
+/* Mirror of the axil binary's own forwarder (axil.c): libaxil fires this from
+ * axil_init() between init_pre_bind() and the first bind, so a harness that
+ * left it undefined would boot every -T module without the post-chroot content
+ * load that production gets -- the suite would then be testing a module-less
+ * boot and calling it green. Nothing to chroot under -T; the hook fires all
+ * the same, which is exactly the point of mirroring it. */
+int
+axil_post_chroot(void)
+{
+	return on_axil_post_chroot();
+}
+
 void
 axil_disconnect(socket_t fd)
 {

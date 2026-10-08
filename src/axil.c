@@ -21,7 +21,12 @@
  *  - `-s PORT`    HTTPS listen port (POSIX; `axil_config.ssl_port`, used when
  *                 TLS is active).
  *  - `-C PATH`    change (chdir) to PATH before starting up
- *                 (`axil_config.chroot`).
+ *                 (`axil_config.chroot`). As root it is a real chroot(2) plus
+ *                 `chdir("/")`; otherwise a plain chdir. Startup order is:
+ *                 `-m` modules load (host paths) → platform init_pre_bind()
+ *                 does the chroot/chdir → `axil_post_chroot()` fires → bind →
+ *                 serve. Modules loading files after `-C` resolve them inside
+ *                 the jail.
  *  - `-K PATH`    load SSL certificate mappings from file (POSIX); one
  *                 `domain:cert:key` entry per line.
  *  - `-k CERT`    add a single SSL certificate mapping `domain:cert:key`.
@@ -114,6 +119,7 @@ typedef SOCKET socket_t;
 typedef int socket_t;
 #endif
 
+XY_DEF(int, on_axil_post_chroot, void);
 XY_DEF(int, on_axil_exit, int, i);
 XY_DEF(int, on_axil_update, unsigned long long, dt);
 XY_DEF(int, on_axil_vim, socket_t, fd, int, argc, char **, argv);
@@ -287,6 +293,11 @@ char *axil_auth_check(socket_t fd) {
 	}
 
 	return NULL;
+}
+
+int axil_post_chroot(void)
+{
+	return on_axil_post_chroot();
 }
 
 void

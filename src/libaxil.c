@@ -1727,6 +1727,14 @@ static void axil_init(void)
 	if (axil_platform && axil_platform->init_pre_bind)
 		axil_platform->init_pre_bind();
 
+	/* Post-chroot, pre-bind: init_pre_bind() is where -C did its chroot()
+	 * and chdir("/"), and the first axil_bind() below is where the server
+	 * becomes reachable. Content that resolves paths on disk belongs in this
+	 * window -- after the filesystem view changed, before a request can beat
+	 * it to the answer. */
+	if (axil_post_chroot)
+		axil_post_chroot();
+
 	mime_put("html", "text/html; charset=utf-8");
 	mime_put("txt", "text/plain; charset=utf-8");
 	mime_put("css", "text/css");

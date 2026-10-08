@@ -21,6 +21,17 @@ typedef SOCKET socket_t;
 typedef int socket_t;
 #endif
 
+/** @brief Hook fired once after startup's `-C` chroot/chdir, before any bind.
+ *
+ *  This is the point where the process's filesystem view has changed but no
+ *  socket is listening yet, so a module that resolves paths at boot -- a
+ *  content loader, say -- can load from inside the jail here and be finished
+ *  before the first request is served. Hooks fired later (on_axil_update,
+ *  on_axil_connect, ...) all run after bind, which is too late for that.
+ *
+ *  Zero implementors is a safe no-op; a second fire (a host that does not
+ *  chroot has nothing to do) is the implementor's own to ignore. */
+XY_DECL(int, on_axil_post_chroot, void);
 /** @brief Hook fired as the server is about to exit (i = exit code). */
 XY_DECL(int, on_axil_exit, int, i);
 /** @brief Hook fired each event-loop update (dt = millisecond delta). */

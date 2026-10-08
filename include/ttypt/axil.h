@@ -225,6 +225,16 @@ int axil_ws_close(socket_t fd);
 int axil_ws_printf(socket_t fd, const char *fmt, ...);
 
 /* define these */
+/** Called once after startup's `-C` chroot/chdir and before any bind.
+ *
+ *  libaxil fires it from axil_init(), between the platform's init_pre_bind()
+ *  (which does the chroot/chdir) and axil_bind(). That window is the whole
+ *  point: the filesystem view has already changed, no socket is listening
+ *  yet, so a module loading content here resolves every path inside the jail
+ *  and finishes before the first request can be served. The axil binary
+ *  forwards it to the composable `on_axil_post_chroot` XY hook (axil-xy.h);
+ *  a host that does not define this symbol simply never fires it. */
+extern int axil_post_chroot(void) WEAK;
 /** Periodic update hook. */
 extern void axil_update(unsigned long long dt) WEAK;
 /** Called when a command is not found. */
