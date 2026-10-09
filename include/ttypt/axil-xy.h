@@ -40,6 +40,13 @@ XY_DECL(int, on_axil_update, unsigned long long, dt);
 XY_DECL(int, on_axil_vim, socket_t, fd, int, argc, char **, argv);
 /** @brief Hook fired for a command string from a client fd. */
 XY_DECL(int, on_axil_command, socket_t, fd, int, argc, char **, argv);
+/** @brief Hook fired after every dispatched command (tail flush).
+ *
+ *  axil calls the executable's weak `axil_flush` bridge at the tail of
+ *  cmd_proc(); that bridge dispatches here. A module that buffers output
+ *  (e.g. a history+dedup typewriter buffer) drains it from this hook so the
+ *  last reply is not left pending until the next, different write. */
+XY_DECL(int, on_axil_flush, socket_t, fd, int, argc, char **, argv);
 /** @brief Hook fired when a client connects. */
 XY_DECL(int, on_axil_connect, socket_t, fd);
 /** @brief Hook fired when a client disconnects. */

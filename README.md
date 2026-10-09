@@ -369,6 +369,7 @@ When built with libxylem support, modules may implement these hooks (declared in
 | `on_axil_update` | `int on_axil_update(unsigned long long dt)` | Periodic update tick. |
 | `on_axil_vim` | `int on_axil_vim(socket_t fd, int argc, char **argv)` | Unknown command. |
 | `on_axil_command` | `int on_axil_command(socket_t fd, int argc, char **argv)` | Before command execution. |
+| `on_axil_flush` | `int on_axil_flush(socket_t fd, int argc, char **argv)` | After command execution (tail flush). |
 | `on_axil_connect` | `int on_axil_connect(socket_t fd)` | On WebSocket connect. |
 | `on_axil_disconnect` | `int on_axil_disconnect(socket_t fd)` | On disconnect. |
 | `on_axil_tick` | `int on_axil_tick(socket_t fd)` | Tick for externally-watched fds. |

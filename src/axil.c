@@ -124,6 +124,7 @@ XY_DEF(int, on_axil_exit, int, i);
 XY_DEF(int, on_axil_update, unsigned long long, dt);
 XY_DEF(int, on_axil_vim, socket_t, fd, int, argc, char **, argv);
 XY_DEF(int, on_axil_command, socket_t, fd, int, argc, char **, argv);
+XY_DEF(int, on_axil_flush, socket_t, fd, int, argc, char **, argv);
 XY_DEF(int, on_axil_connect, socket_t, fd);
 XY_DEF(int, on_axil_disconnect, socket_t, fd);
 XY_DEF(int, on_axil_tick, socket_t, fd);
@@ -317,6 +318,11 @@ void axil_vim(socket_t fd, int argc, char *argv[])
 void axil_command(socket_t fd, int argc, char *argv[])
 {
 	on_axil_command(fd, argc, argv);
+}
+
+void axil_flush(socket_t fd, int argc, char *argv[])
+{
+	on_axil_flush(fd, argc, argv);
 }
 
 int axil_connect(socket_t fd) {

@@ -276,6 +276,17 @@ if [ $need_py -eq 0 ] && [ "$ws_posix" = 1 ]; then
 		fi
 	done
 
+	# T9/S6.7: exactly one Close frame for a client-initiated close. The echo
+	# is ws_read()'s; a second (from axil_close()) makes a browser fail with
+	# "Close received after close".
+	if out=$(python3 ./test-split.py --ws-echo "$route_port" /ws-frames 16 \
+		--close 2>&1) && echo "$out" | grep -q "^second=none$"
+	then
+		ok "T9  ws close sends exactly one frame"
+	else
+		bad "T9  ws close sends exactly one frame ($(echo "$out" | tail -n1))"
+	fi
+
 	# T9/S1.4: on the unwatched path the upgrade request must be dispatched
 	# exactly once, no matter how many frames arrive. Before the S1 fix every
 	# frame re-parses the stale request and dispatches it again, so the count

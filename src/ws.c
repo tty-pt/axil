@@ -42,6 +42,12 @@
 static io_ssize_t axil_low_write(socket_t fd, void *from, io_size_t len, int flags);
 
 enum ws_flags {
+	/* A Close frame has already gone out on this fd. RFC 6455 5.5.1 allows one
+	 * Close per connection: the echo in ws_read() and the teardown in
+	 * axil_close() (and axil_ws_close()) can otherwise both fire. A browser
+	 * that receives the second reports "Close received after close" and fails
+	 * the socket. ws_init() clears this on every upgrade. */
+	WS_CLOSE_SENT = 0x1,
 	WS_BINARY = 0x2,
 	WS_FIN = 0x80,
 };
@@ -238,6 +244,15 @@ ws_close_status(socket_t cfd, unsigned status)
 	/* Also the guard for ws_close(), which has no other array access. */
 	if (!FD_VALID(cfd))
 		return;
+
+	/* One Close per connection (RFC 6455 5.5.1). The echo in ws_read() and the
+	 * teardown in axil_close()/axil_ws_close() are separate calls on the same
+	 * fd, so without this the peer gets two Close frames and the browser
+	 * reports "Close received after close". The first call already reset the
+	 * frame, so returning here leaks nothing. */
+	if (ws_flags[cfd] & WS_CLOSE_SENT)
+		return;
+	ws_flags[cfd] |= WS_CLOSE_SENT;
 
 	frame[0] = WS_FIN_CLOSE;
 	frame[1] = 0x02;
@@ -519,8 +534,10 @@ ws_dprintf(socket_t fd, const char *format, va_list ap)
 	if (len < 0 || (size_t)len >= sizeof(buf))
 		len = sizeof(buf) - 1;
 
-	/* `|` not `&`: the two are disjoint bits, so `WS_BINARY & WS_FIN` is 0. */
-	ws_flags[fd] = WS_BINARY | WS_FIN;
+	/* `|` not `&`: the two are disjoint bits, so `WS_BINARY & WS_FIN` is 0.
+	 * WS_CLOSE_SENT is carried over: overwriting it would let a later teardown
+	 * send a second Close. */
+	ws_flags[fd] = WS_BINARY | WS_FIN | (ws_flags[fd] & WS_CLOSE_SENT);
 	return ws_write(fd, buf, (io_size_t)len, 0);
 }
 

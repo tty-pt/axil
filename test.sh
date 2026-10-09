@@ -694,6 +694,14 @@ if wait_for_port_tcp "$route_port"; then
 					sh -c "python3 ./test-split.py --ws-echo $route_port /ws-frames $t9_n $t9_flag"
 			done
 
+			# T9/S6.7: exactly one Close frame for a client-initiated close.
+			# ws_read() echoes one and axil_close() then sent a second, which
+			# a browser rejects as "Close received after close". The `16:--close`
+			# case above already fails if a second frame follows the echo; this
+			# names the property.
+			assert_contains ws-frame-close-once "second=none" \
+				sh -c "python3 ./test-split.py --ws-echo $route_port /ws-frames 16 --close"
+
 			# T9/S1.4: the upgrade request must be dispatched exactly once per
 			# connection, not once per frame. The pattern omits the slash after
 			# GET because the replay is logged truncated ("GET ws-unwatche"),
