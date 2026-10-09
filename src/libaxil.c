@@ -20,6 +20,7 @@
 #include <stdlib.h>
 #include <stdint.h>
 #include <string.h>
+#include <strings.h>
 #if !defined(_WIN32)
 #include <sys/mman.h>
 #endif
