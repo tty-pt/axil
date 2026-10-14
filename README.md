@@ -1,10 +1,15 @@
+<p align="center">
+  <img src="assets/logo.png" alt="axil logo" width="220" />
+</p>
+
 # axil
 
 [![C99](https://img.shields.io/badge/C-C99-555?logo=c)](#)
 [![BSD-2-Clause](https://img.shields.io/badge/License-BSD--2--Clause-blue)](#)
 [![HTTP(S)+WS daemon](https://img.shields.io/badge/HTTP%28S%29%2BWS-daemon-4B8BBE)](#)
+[![libxylem compatible](https://img.shields.io/badge/modules-libxylem-16A34A)](#)
 
-> HTTP(S) + WS(S) + extensible network daemon library
+> Extensible HTTP(S), WebSocket, and network daemon library with native dynamic module support.
 
 A cross-platform C library for building network daemons - HTTP servers, WebSocket servers, telnet-like services, or custom network applications.
 
