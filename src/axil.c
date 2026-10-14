@@ -21,7 +21,12 @@
  *  - `-s PORT`    HTTPS listen port (POSIX; `axil_config.ssl_port`, used when
  *                 TLS is active).
  *  - `-C PATH`    change (chdir) to PATH before starting up
- *                 (`axil_config.chroot`).
+ *                 (`axil_config.chroot`). As root it is a real chroot(2) plus
+ *                 `chdir("/")`; otherwise a plain chdir. Startup order is:
+ *                 `-m` modules load (host paths) → platform init_pre_bind()
+ *                 does the chroot/chdir → `axil_post_chroot()` fires → bind →
+ *                 serve. Modules loading files after `-C` resolve them inside
+ *                 the jail.
  *  - `-K PATH`    load SSL certificate mappings from file (POSIX); one
  *                 `domain:cert:key` entry per line.
  *  - `-k CERT`    add a single SSL certificate mapping `domain:cert:key`.
@@ -114,10 +119,12 @@ typedef SOCKET socket_t;
 typedef int socket_t;
 #endif
 
+XY_DEF(int, on_axil_post_chroot, void);
 XY_DEF(int, on_axil_exit, int, i);
 XY_DEF(int, on_axil_update, unsigned long long, dt);
 XY_DEF(int, on_axil_vim, socket_t, fd, int, argc, char **, argv);
 XY_DEF(int, on_axil_command, socket_t, fd, int, argc, char **, argv);
+XY_DEF(int, on_axil_flush, socket_t, fd, int, argc, char **, argv);
 XY_DEF(int, on_axil_connect, socket_t, fd);
 XY_DEF(int, on_axil_disconnect, socket_t, fd);
 XY_DEF(int, on_axil_tick, socket_t, fd);
@@ -137,6 +144,19 @@ void exit_all(int i) {
 
 	if (i)
 		exit(i);
+}
+
+/* A fault must not be able to pose as a clean shutdown: exit_all() closes the
+ * log, syncs and returns, which is how a null dispatch on a successful login
+ * took the daemon down without a single trace. Log the signal, put the default
+ * handler back and re-raise so the kernel writes the core. */
+static void
+segv_fault(int sig) {
+	signal(sig, SIG_DFL);
+	qsys_syslog(QLOG_ERR, "fatal signal %d -- dumping core", sig);
+	qsys_closelog();
+	raise(sig);
+	_exit(128 + sig);
 }
 
 void
@@ -205,7 +225,7 @@ main(int argc, char *argv[])
 	}
 #endif
 
-	signal(SIGSEGV, exit_all);
+	signal(SIGSEGV, segv_fault);
 
 	srand(getpid());
 
@@ -276,6 +296,11 @@ char *axil_auth_check(socket_t fd) {
 	return NULL;
 }
 
+int axil_post_chroot(void)
+{
+	return on_axil_post_chroot();
+}
+
 void
 axil_update(unsigned long long dt)
 {
@@ -295,6 +320,11 @@ void axil_command(socket_t fd, int argc, char *argv[])
 	on_axil_command(fd, argc, argv);
 }
 
+void axil_flush(socket_t fd, int argc, char *argv[])
+{
+	on_axil_flush(fd, argc, argv);
+}
+
 int axil_connect(socket_t fd) {
 	if (axil_config.flags & AXIL_AUTOAUTH) {
 #ifndef _WIN32
@@ -303,15 +333,28 @@ int axil_connect(socket_t fd) {
 #else
 		axil_auth(fd, "root");
 #endif
+		/* Record that the identity above was published rather than proven.
+		 * axil_auth() sets DF_AUTHENTICATED, so without this a descriptor
+		 * would be indistinguishable from a genuinely authenticated one --
+		 * and under -A the name is literally the operator's own, so even a
+		 * name comparison cannot tell them apart. axil_set_flags() assigns
+		 * rather than ors, so the existing bits must be preserved. */
+		if (FD_VALID(fd))
+			axil_set_flags(fd, axil_flags(fd) | DF_AUTH_AUTO);
 	}
 	on_axil_connect(fd);
 	return !!(axil_config.flags & AXIL_AUTOAUTH);
 }
 
 void axil_disconnect(socket_t fd) {
-	if (!(axil_flags(fd) & DF_AUTHENTICATED))
-		return;
-
+	/* No DF_AUTHENTICATED gate here on purpose. A module can attach a pty and
+	 * spawn a child to an *unauthenticated* descriptor (a raw telnet terminal,
+	 * a /tty GET), so gating teardown on authentication means a connection that
+	 * holds a pty and a live child can never be cleaned up. The kernel then
+	 * recycles the fd to an unrelated request, and the module's fd-keyed state
+	 * -- plus the pty itself -- silently attaches to it. Modules self-gate: they
+	 * return early for a descriptor they do not own. See axil.h for the contract
+	 * and SECURITY.md finding S5.4. */
 	on_axil_disconnect(fd);
 }
 

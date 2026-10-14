@@ -20,6 +20,7 @@
 #include <stdlib.h>
 #include <stdint.h>
 #include <string.h>
+#include <strings.h>
 #if !defined(_WIN32)
 #include <sys/mman.h>
 #endif
@@ -63,6 +64,13 @@
 #include <sys/wait.h>
 #include <termios.h>
 #define INVALID_SOCKET -1
+#endif
+
+/* Sockets need closesocket() on Winsock; close() only works for CRT fds. */
+#ifdef _WIN32
+#define axil_sock_close(fd) closesocket(fd)
+#else
+#define axil_sock_close(fd) close(fd)
 #endif
 
 #include <sys/stat.h>
@@ -113,6 +121,11 @@
 #define BODY_STALL_SLEEP_MS    500
 
 struct descr descr_map[FD_SETSIZE] AXIL_HIDDEN;
+
+/* Source of per-connection generations for struct descr.generation. Never
+ * reused or wrapped in practice: it is bumped once per accept, and an
+ * unsigned long long at a million accepts a second still takes ~585k years. */
+static unsigned long long conn_generation;
 
 struct cmd {
 	int fd;
@@ -277,6 +290,23 @@ void axil_respond(socket_t fd, int code, const char *body)
 	axil_default_response_headers(fd);
 
 	size_t body_len = (body && !(d->flags & DF_HEAD)) ? strlen(body) : 0;
+
+	/* Framing: without Content-Length the peer can only delimit the body
+	 * by connection close, and over TLS that requires close_notify --
+	 * without either, strict clients (OpenSSL 3.5+, current browsers)
+	 * discard the response as truncated, taking Set-Cookie with it
+	 * (observed live: a login 303 that neither logged in nor errored).
+	 * 1xx/204/304 carry no body by definition, so no length is stated;
+	 * anything else always closes (DF_TO_CLOSE below), hence the
+	 * Connection header too. */
+	axil_header_set_default(fd, "Connection", "close");
+	if ((code < 100 || code >= 200) && code != 204 && code != 304) {
+		char len_buf[32];
+		snprintf(len_buf, sizeof(len_buf), "%lu",
+		         (unsigned long)body_len);
+		axil_header_set_default(fd, "Content-Length", len_buf);
+	}
+
 	char hdr[4096];
 	int hlen = snprintf(
 	        hdr, sizeof(hdr), "HTTP/1.1 %d %s\r\n%s\r\n", code,
@@ -393,6 +423,20 @@ static void axil_ssl_drop(struct descr *d)
 {
 	if (!d->cSSL)
 		return;
+	/* Best-effort close_notify first: tearing TLS down with a bare
+	 * shutdown()/close() leaves strict clients (OpenSSL 3.5+, current
+	 * browsers) reporting truncation and discarding the response they
+	 * already received -- observed live as a login 303 + Set-Cookie
+	 * that never took effect. Non-blocking: at most two SSL_shutdown
+	 * calls, never wait on the peer. */
+	for (int i = 0; i < 2; i++) {
+		int r = SSL_shutdown(d->cSSL);
+		if (r == 1)
+			break;
+		int e = SSL_get_error(d->cSSL, r);
+		if (e != SSL_ERROR_WANT_READ && e != SSL_ERROR_WANT_WRITE)
+			break;
+	}
 	SSL_free(d->cSSL);
 	d->cSSL = NULL;
 }
@@ -437,7 +481,14 @@ void axil_close(socket_t fd)
 
 	d->resp_headers[0] = '\0';
 
-	if ((d->flags & DF_CONNECTED) && axil_disconnect)
+	/* Unconditional. This used to be gated on DF_CONNECTED, which is only set
+	 * by a WebSocket upgrade (axil_ws_upgrade) or axil_auth(), so every other
+	 * descriptor -- including any connection a module had given a pty and a
+	 * child shell to -- was torn down without ever reaching the hook. The
+	 * kernel reuses fd numbers, so module state keyed by fd outlived its
+	 * connection and landed on the next one. axil.h states this hook fires
+	 * whenever a descriptor is torn down; this is that. SECURITY.md S5.4. */
+	if (axil_disconnect)
 		axil_disconnect(fd);
 
 	if (d->flags & DF_WEBSOCKET)
@@ -460,7 +511,7 @@ void axil_close(socket_t fd)
 	}
 
 	shutdown(fd, 2);
-	close(fd);
+	axil_sock_close(fd);
 
 	tunnel_pair[fd] = INVALID_SOCKET;
 
@@ -769,15 +820,17 @@ static void descr_new(int ssl)
 {
 	struct sockaddr_in addr;
 	socklen_t addr_len = (socklen_t)sizeof(addr);
-	int fd = accept(
+	socket_t fd = accept(
 	        ssl ? srv_ssl_fd : srv_fd, (struct sockaddr *)&addr, &addr_len);
 	struct descr *d;
 	struct io *dio;
 
-	if (fd <= 0)
+	/* INVALID_SOCKET (~0) only survives "fd <= 0" once socket_t is the
+	 * unsigned Windows SOCKET, so spell the sentinel out. */
+	if (fd == INVALID_SOCKET || fd == 0)
 		return;
 	if (fd >= FD_SETSIZE) {
-		close(fd);
+		axil_sock_close(fd);
 		return;
 	}
 
@@ -803,6 +856,10 @@ static void descr_new(int ssl)
 	dio = &io[fd];
 	memset(d, 0, sizeof(struct descr));
 	memset(dio, 0, sizeof(struct io));
+	/* New identity for this slot. The memset above just zeroed it, and fd
+	 * numbers are reused, so a module holding state keyed by fd from a previous
+	 * connection cannot be told apart from this one by the number alone. */
+	d->generation = ++conn_generation;
 	/* frame_map is keyed by fd number and is not part of struct descr, so the
 	 * memsets above do not touch it. A closed WebSocket that still held a
 	 * partially received frame would otherwise leave frame_map[fd].data
@@ -817,7 +874,7 @@ static void descr_new(int ssl)
 	d->remaining_size = BUFSIZ * 1024;
 	d->remaining = malloc(d->remaining_size);
 	if (!d->remaining) {
-		close(fd);
+		axil_sock_close(fd);
 		FD_CLR(fd, &fds_active);
 		return;
 	}
@@ -861,7 +918,7 @@ static void axil_upstream_descr_init(socket_t fd)
 	d->remaining_size = BUFSIZ * 1024;
 	d->remaining = malloc(d->remaining_size);
 	if (!d->remaining) {
-		close(fd);
+		axil_sock_close(fd);
 		return;
 	}
 	d->epid = 0;
@@ -1316,7 +1373,7 @@ static void axil_raw_descr_reset(socket_t fd)
 	}
 
 	shutdown(fd, 2);
-	close(fd);
+	axil_sock_close(fd);
 
 	tunnel_pair[fd] = INVALID_SOCKET;
 
@@ -1670,6 +1727,14 @@ static void axil_init(void)
 
 	if (axil_platform && axil_platform->init_pre_bind)
 		axil_platform->init_pre_bind();
+
+	/* Post-chroot, pre-bind: init_pre_bind() is where -C did its chroot()
+	 * and chdir("/"), and the first axil_bind() below is where the server
+	 * becomes reachable. Content that resolves paths on disk belongs in this
+	 * window -- after the filesystem view changed, before a request can beat
+	 * it to the answer. */
+	if (axil_post_chroot)
+		axil_post_chroot();
 
 	mime_put("html", "text/html; charset=utf-8");
 	mime_put("txt", "text/plain; charset=utf-8");
@@ -2990,7 +3055,7 @@ static void request_handle(socket_t fd, int argc, char *argv[], int req_flags)
 			{
 				fprintf(stderr,
 				        "WS: no Sec-WebSocket-Key header\n");
-				close(upstream);
+				axil_sock_close(upstream);
 			} else {
 				char req_buf[2048];
 				int len = snprintf(
@@ -3005,12 +3070,12 @@ static void request_handle(socket_t fd, int argc, char *argv[], int req_flags)
 				        argv[0], argv[1], ws_key);
 
 				if (len <= 0 || len >= (int)sizeof(req_buf)) {
-					close(upstream);
+					axil_sock_close(upstream);
 					return;
 				}
 
 				if (upstream >= FD_SETSIZE) {
-					close(upstream);
+					axil_sock_close(upstream);
 					return;
 				}
 
@@ -3119,6 +3184,28 @@ void axil_ws_handler(char *path, axil_ws_upstream_t handler)
 	corm_put(ws_hd, path, &handler);
 }
 
+/* Apply -A in the library, not only in the axil executable's weak
+ * axil_connect(). Library-linked hosts otherwise upgrade without any provenance
+ * mark, even though DF_AUTH_AUTO is the only thing that distinguishes a
+ * published server identity from a proven one. Idempotent: callers and the
+ * executable's axil_connect() may both run it for the same descriptor. */
+static void
+axil_autoauth_apply(socket_t fd)
+{
+	if (!(axil_config.flags & AXIL_AUTOAUTH))
+		return;
+
+#ifndef _WIN32
+	struct passwd *pw = getpwuid(geteuid());
+	axil_auth(fd, pw ? pw->pw_name : "root");
+#else
+	axil_auth(fd, "root");
+#endif
+
+	if (FD_VALID(fd))
+		axil_set_flags(fd, axil_flags(fd) | DF_AUTH_AUTO);
+}
+
 int axil_ws_upgrade(socket_t fd)
 {
 	struct descr *d = &descr_map[fd];
@@ -3138,6 +3225,7 @@ int axil_ws_upgrade(socket_t fd)
 	dio->read = ws_read;
 	dio->write = ws_write;
 
+	axil_autoauth_apply(fd);
 	if (!axil_connect || axil_connect(fd))
 		d->flags |= DF_CONNECTED;
 
@@ -3160,7 +3248,7 @@ int axil_ws_close(socket_t fd)
 	 * as well as inside ws_close_status(): the other three wrappers get it for
 	 * free because the functions they call return int. Without it, -1 from a
 	 * failed accept reached io[cfd].lower_write and frame_map[cfd]. */
-	if (fd < 0 || fd >= FD_SETSIZE) {
+	if (!FD_VALID(fd)) {
 		errno = EBADF;
 		return -1;
 	}
@@ -3236,6 +3324,11 @@ void do_DELETE(socket_t fd, int argc, char *argv[])
 int axil_flags(socket_t fd)
 {
 	return descr_map[fd].flags;
+}
+
+unsigned long long axil_generation(socket_t fd)
+{
+	return descr_map[fd].generation;
 }
 
 void axil_set_flags(socket_t fd, int flags)

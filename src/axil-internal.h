@@ -46,6 +46,13 @@ struct descr {
 #endif
 	unsigned env_hd;
 	char resp_headers[BUFSIZ];
+	/* Monotonic per-connection identity, bumped by descr_new(). fd numbers are
+	 * reused, so a module that keys state by fd (axil-tty keeps a pty and a
+	 * spawned shell in one) cannot tell "my descriptor" from "the descriptor
+	 * that took my number after I closed". Comparing this against the value
+	 * captured when the state was created rejects that stale entry instead of
+	 * acting on it. SECURITY.md S5.4. */
+	unsigned long long generation;
 };
 
 #ifndef AXIL_HIDDEN

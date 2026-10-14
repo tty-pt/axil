@@ -286,13 +286,43 @@ def test_slowloris(port, count=20):
 	return True
 
 
+def test_flags(port, path="/wsflags"):
+	"""Report the descriptor flags as seen *inside* the upgrade hook.
+
+	DF_AUTH_AUTO is set by axil_connect(), which only runs on a WebSocket
+	upgrade, so it cannot be observed over a plain HTTP request. The test-auth
+	server answers this path by upgrading and then writing its flags into the
+	first frame, which is what makes the flag observable at all."""
+	sock = socket.create_connection(("127.0.0.1", port), timeout=5)
+	sock.settimeout(5)
+	bsock, _extra = ws_handshake(sock, port, path)
+	try:
+		frame = recv_frame(bsock)
+	except socket.timeout:
+		print("FAIL wsflags: timed out waiting for the flags frame")
+		return False
+	if not frame:
+		print("FAIL wsflags: connection closed instead of reporting flags")
+		return False
+	_fin, opcode, payload = frame
+	if opcode == 0x8:
+		print("FAIL wsflags: server sent close frame")
+		return False
+	print("wsflags %s" % payload.decode("utf-8", errors="replace").strip())
+	sock.close()
+	return True
+
+
 def main():
 	if len(sys.argv) < 2:
-		print("usage: test-ws.py <port> [--pty] [--split] [--large] [--slowloris]")
+		print("usage: test-ws.py <port> [--pty] [--split] [--large] [--slowloris] [--flags]")
 		return 2
 	port = int(sys.argv[1])
 	args = sys.argv[2:]
 	use_pty = "--pty" in args
+
+	if "--flags" in args:
+		return 0 if test_flags(port) else 1
 
 	# frame-layer regression tests, each on its own connection
 	frame_tests = [

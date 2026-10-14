@@ -1,4 +1,10 @@
 #include "../include/ttypt/axil.h"
+/* NOTE: <ttypt/xy-mod.h> must NOT be included here. It defines a macro
+ * xy_load() bound to this TU's own never-filled module context; the harness is
+ * a host binary, so it uses the real xy_load() from xy.h, exactly like the
+ * axil binary's main() does. */
+#include <ttypt/xy.h>
+#include <ttypt/axil-xy.h>
 
 #include <signal.h>
 #include <stdio.h>
@@ -11,16 +17,71 @@
 #endif
 
 /* T7 (change 4): counts disconnects so the shell test can assert that
- * axil_disconnect() is reachable for an authenticated HTTP request.
- * libaxil.c:413 only calls it when DF_CONNECTED is set, and at HEAD nothing
- * ever set DF_CONNECTED for HTTP, so the hook was dead. */
+ * axil_disconnect() is reachable. It used to be gated on DF_CONNECTED (and then
+ * on DF_AUTHENTICATED in axil_disconnect()), so it never fired for an
+ * unauthenticated request -- which meant a module that had attached a pty to one
+ * could never clean it up, and its fd-keyed state outlived the connection.
+ * SECURITY.md S5.4. Both gates are gone; the count now includes
+ * unauthenticated requests, which is the point. */
 static int disconnects;
+
+/* Mirror of the axil binary's own forwarder (axil.c): libaxil fires this from
+ * axil_init() between init_pre_bind() and the first bind, so a harness that
+ * left it undefined would boot every -T module without the post-chroot content
+ * load that production gets -- the suite would then be testing a module-less
+ * boot and calling it green. Nothing to chroot under -T; the hook fires all
+ * the same, which is exactly the point of mirroring it. */
+int
+axil_post_chroot(void)
+{
+	return on_axil_post_chroot();
+}
 
 void
 axil_disconnect(socket_t fd)
 {
 	(void)fd;
 	disconnects++;
+	/* Production's axil_disconnect() dispatches this; without it a module's
+	 * per-connection state (PTY masters, children) leaks and watched fds spin
+	 * the loop. The count above stays first so the S5.4 regression still
+	 * observes every teardown including unauthenticated ones. */
+	on_axil_disconnect(fd);
+}
+
+/* Mirrors the axil binary's hooks so modules under test (-T) see the same
+ * dispatch they get in production. Without these, libaxil's guarded calls
+ * (`if (!axil_connect || ...)`, `if (axil_parse && ...)`) short-circuit and a
+ * loaded module's on_axil_connect/on_axil_parse never run -- the upgrade
+ * completes but no hook fires. The -A branch copies axil.c's autoauth,
+ * including DF_AUTH_AUTO, so the flag behaviour under test is the real one. */
+int
+axil_connect(socket_t fd)
+{
+	if (axil_config.flags & AXIL_AUTOAUTH) {
+#ifndef _WIN32
+		struct passwd *pw = getpwuid(geteuid());
+		axil_auth(fd, pw ? pw->pw_name : "root");
+#else
+		axil_auth(fd, "root");
+#endif
+		if (FD_VALID(fd))
+			axil_set_flags(fd, axil_flags(fd) | DF_AUTH_AUTO);
+	}
+	on_axil_connect(fd);
+	return !!(axil_config.flags & AXIL_AUTOAUTH);
+}
+
+int
+axil_parse(socket_t fd, unsigned char *input, int nread)
+{
+	return on_axil_parse(fd, input, nread);
+}
+
+void
+axil_fd_tick(socket_t fd)
+{
+	on_axil_tick(fd);
 }
 
 static int
@@ -196,10 +257,11 @@ auth_badfd_handler(socket_t fd, char *body)
 }
 #endif /* !_WIN32 */
 
-/* T7 (change 4): reports the disconnect count. libaxil.c:413 only calls
- * axil_disconnect() when DF_CONNECTED is set, and this probe is itself
- * unauthenticated, so the number it reports reflects authenticated requests
- * only. */
+/* T7 (change 4): reports the disconnect count, including for this connection.
+ * Both the DF_CONNECTED and DF_AUTHENTICATED gates are gone (SECURITY.md S5.4),
+ * so an unauthenticated request such as this one bumps it. That is exactly the
+ * behaviour under test: a module may hold a pty on an unauthenticated terminal,
+ * so teardown cannot be conditional on auth. */
 static int
 auth_disconnect_handler(socket_t fd, char *body)
 {
@@ -207,6 +269,44 @@ auth_disconnect_handler(socket_t fd, char *body)
 
 	(void)body;
 	snprintf(resp, sizeof(resp), "%d\n", disconnects);
+	return route_respond_str(fd, resp);
+}
+
+/* Reports DF_AUTH_AUTO for this connection. -A authenticates every connection as
+ * the server's own account, so the only way a downstream module can tell a
+ * published identity from a proven one is this flag -- the name is identical, so
+ * a name comparison cannot help. DF_AUTHENTICATED is reported too because -A
+ * sets that as well: a module gating on it alone is the bug this route catches.
+ *
+ * The flags are only meaningful after a WebSocket upgrade, because that is where
+ * axil_connect() runs the -A autoauth; a plain request never sees it. So the
+ * route upgrades and answers inside the first frame. */
+static int
+auth_flags_handler(socket_t fd, char *body)
+{
+	char resp[64], key[ENV_VALUE_LEN];
+	int flags = axil_flags(fd);
+
+	(void)body;
+
+	if (axil_env_get(fd, key, sizeof(key), "HTTP_SEC_WEBSOCKET_KEY") == 0) {
+		if (axil_ws_upgrade(fd) < 0)
+			return route_respond_str(fd, "upgrade-failed");
+		flags = axil_flags(fd);
+		axil_ws_printf(fd, "auto=%d auth=%d\n",
+		    !!(flags & DF_AUTH_AUTO) ? 1 : 0,
+		    !!(flags & DF_AUTHENTICATED) ? 1 : 0);
+#ifndef _WIN32
+		/* External watch is POSIX-only (axil.h); without it the upgraded
+		 * socket stays with descr_read_ws(), which is safe for this route. */
+		axil_fd_watch(fd);
+#endif
+		return 1;
+	}
+
+	snprintf(resp, sizeof(resp), "auto=%d auth=%d\n",
+	    !!(flags & DF_AUTH_AUTO) ? 1 : 0,
+	    !!(flags & DF_AUTHENTICATED) ? 1 : 0);
 	return route_respond_str(fd, resp);
 }
 
@@ -243,7 +343,7 @@ main(int argc, char *argv[])
 
 	axil_config.flags = 0;
 
-	while ((opt = getopt(argc, argv, "p:C:")) != -1) {
+	while ((opt = getopt(argc, argv, "p:C:AT:")) != -1) {
 		switch (opt) {
 		case 'p':
 			axil_config.port = (unsigned) atoi(optarg);
@@ -251,8 +351,22 @@ main(int argc, char *argv[])
 		case 'C':
 			axil_config.chroot = optarg;
 			break;
+		case 'A':
+			axil_config.flags |= AXIL_AUTOAUTH;
+			break;
+		case 'T':
+			/* Load a module under test (e.g. axil-tty) so its routes run
+			 * behind this harness's file-backed cookie auth. The module's
+			 * xy_install() runs at load; auth_init() equivalents, if any,
+			 * are the module's own business. Host-side xy_load(): it
+			 * ensures the runtime itself. */
+			if (xy_load(optarg) != 0) {
+				fprintf(stderr, "test-auth: xy_load(%s) failed\n", optarg);
+				return 1;
+			}
+			break;
 		default:
-			fprintf(stderr, "usage: %s -p <port> -C <dir>\n", argv[0]);
+			fprintf(stderr, "usage: %s -p <port> -C <dir> [-A] [-T module]\n", argv[0]);
 			return 1;
 		}
 	}
@@ -265,6 +379,8 @@ main(int argc, char *argv[])
 	axil_register_handler("GET:/auth-badfd", auth_badfd_handler);
 #endif
 	axil_register_handler("GET:/disconnects", auth_disconnect_handler);
+	axil_register_handler("GET:/autoauth", auth_flags_handler);
+	axil_register_handler("GET:/wsflags", auth_flags_handler);
 	axil_register("GET", do_GET, CF_NOAUTH | CF_NOTRIM);
 	axil_register("POST", do_POST, CF_NOAUTH | CF_NOTRIM);
 	axil_register("PUT", do_PUT, CF_NOAUTH | CF_NOTRIM);

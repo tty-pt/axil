@@ -24,7 +24,7 @@ struct axil_platform_ops {
 };
 
 #ifndef AXIL_HIDDEN
-#if defined(__GNUC__) || defined(__clang__)
+#if (defined(__GNUC__) || defined(__clang__)) && !defined(_WIN32)
 #define AXIL_HIDDEN __attribute__((visibility("hidden")))
 #else
 #define AXIL_HIDDEN

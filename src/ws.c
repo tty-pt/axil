@@ -37,15 +37,17 @@
 #define WS_CLOSE_POLICY_VIOLATION 1008
 /* FIN set on opcode 8: a complete, unfragmented close frame. */
 #define WS_FIN_CLOSE 0x88
-/* Every array this file indexes is [FD_SETSIZE]: frame_map[], ws_flags[], and
- * (in libaxil.c) descr_map[] and io[]. The check has to come before the first
- * index, not after the frame has already been touched. */
-#define FD_VALID(fd) ((fd) >= 0 && (fd) < FD_SETSIZE)
 
 /* Defined below, in libaxil.c, which includes this file first. */
 static io_ssize_t axil_low_write(socket_t fd, void *from, io_size_t len, int flags);
 
 enum ws_flags {
+	/* A Close frame has already gone out on this fd. RFC 6455 5.5.1 allows one
+	 * Close per connection: the echo in ws_read() and the teardown in
+	 * axil_close() (and axil_ws_close()) can otherwise both fire. A browser
+	 * that receives the second reports "Close received after close" and fails
+	 * the socket. ws_init() clears this on every upgrade. */
+	WS_CLOSE_SENT = 0x1,
 	WS_BINARY = 0x2,
 	WS_FIN = 0x80,
 };
@@ -243,13 +245,24 @@ ws_close_status(socket_t cfd, unsigned status)
 	if (!FD_VALID(cfd))
 		return;
 
-	frame[0] = WS_FIN_CLOSE;
-	frame[1] = 0x02;
-	frame[2] = (unsigned char) (status >> 8);
-	frame[3] = (unsigned char) (status & 0xff);
+	/* One Close per connection (RFC 6455 5.5.1). The echo in ws_read() and the
+	 * teardown in axil_close()/axil_ws_close() are separate calls on the same
+	 * fd, so without this the peer gets two Close frames and the browser
+	 * reports "Close received after close". A repeat still resets the frame
+	 * below: the failed header must be dropped so the next read consumes fresh
+	 * bytes (and can reach EAGAIN and close), not re-test these two forever. */
+	int already = (ws_flags[cfd] & WS_CLOSE_SENT) != 0;
+	ws_flags[cfd] |= WS_CLOSE_SENT;
 
-	if (io[cfd].lower_write(cfd, frame, sizeof(frame), 0) != (ssize_t)sizeof(frame))
-		WARN("ws_close %d: close frame not delivered\n", cfd);
+	if (!already) {
+		frame[0] = WS_FIN_CLOSE;
+		frame[1] = 0x02;
+		frame[2] = (unsigned char) (status >> 8);
+		frame[3] = (unsigned char) (status & 0xff);
+
+		if (io[cfd].lower_write(cfd, frame, sizeof(frame), 0) != (ssize_t)sizeof(frame))
+			WARN("ws_close %d: close frame not delivered\n", cfd);
+	}
 
 	/* Drop any partially received frame: axil_close() frees d->remaining before
 	 * calling us, so without this the payload stayed allocated for the lifetime
@@ -523,8 +536,10 @@ ws_dprintf(socket_t fd, const char *format, va_list ap)
 	if (len < 0 || (size_t)len >= sizeof(buf))
 		len = sizeof(buf) - 1;
 
-	/* `|` not `&`: the two are disjoint bits, so `WS_BINARY & WS_FIN` is 0. */
-	ws_flags[fd] = WS_BINARY | WS_FIN;
+	/* `|` not `&`: the two are disjoint bits, so `WS_BINARY & WS_FIN` is 0.
+	 * WS_CLOSE_SENT is carried over: overwriting it would let a later teardown
+	 * send a second Close. */
+	ws_flags[fd] = WS_BINARY | WS_FIN | (ws_flags[fd] & WS_CLOSE_SENT);
 	return ws_write(fd, buf, (io_size_t)len, 0);
 }
 

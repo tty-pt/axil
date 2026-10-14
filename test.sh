@@ -321,14 +321,25 @@ note_server "$auth_pid"
 
 if wait_for_port_tcp "$auth_port"; then
 	if command -v curl >/dev/null 2>&1; then
-		# T7 (change 4): libaxil.c:413 only calls axil_disconnect() when
-		# DF_CONNECTED is set, and at HEAD nothing ever set it for HTTP, so
-		# the hook was dead. Probe the count *before* any authenticated
-		# request: an unauthenticated one must not bump it.
+		# T7 (change 4): axil_disconnect() must fire for an *unauthenticated*
+		# request. It used to be gated on DF_CONNECTED and then on
+		# DF_AUTHENTICATED, so it fired for neither -- which meant a module that
+		# had attached a pty and a child shell to a raw terminal could never
+		# clean it up, and its fd-keyed state outlived the connection and landed
+		# on the next one (SECURITY.md S5.4). Poll rather than sample once: the
+		# count is read while this request is still open, so the bump for the
+		# previous connection has to have landed already.
 		assert_contains auth-none "auth none" sh -c "curl -sS --max-time 2 http://127.0.0.1:$auth_port/"
-		before=$(curl -sS --max-time 2 "http://127.0.0.1:$auth_port/disconnects" | tr -d '[:space:]')
-		[ "$before" = "0" ] || {
-			echo "Test FAILED! auth-disconnect: unauthenticated request fired the hook ($before)" >&2
+		tries=50
+		before=0
+		while [ $tries -gt 0 ]; do
+			before=$(curl -sS --max-time 2 "http://127.0.0.1:$auth_port/disconnects" | tr -d '[:space:]')
+			[ "$before" -ge 1 ] 2>/dev/null && break
+			tries=$((tries - 1))
+			sleep 0.1
+		done
+		[ "$before" -ge 1 ] 2>/dev/null || {
+			echo "Test FAILED! auth-disconnect: hook never fired for an unauthenticated request ($before)" >&2
 			exit 1
 		}
 
@@ -407,6 +418,19 @@ if wait_for_port_tcp "$auth_port"; then
 			echo "Test FAILED! auth-disconnect: hook never fired for an authenticated request" >&2
 			exit 1
 		}
+
+		# Without -A there is no published identity, so DF_AUTH_AUTO must be
+		# clear even though axil_auth_check() may still have resolved a cookie.
+		# Observed after an upgrade, which is where -A would act.
+		off=$(python3 ./test-ws.py "$auth_port" --flags | sed -n 's/^wsflags //p')
+		case "$off" in
+		*"auto=0"*)
+			;;
+		*)
+			echo "Test FAILED! auth-autoauth-off: expected DF_AUTH_AUTO clear without -A, got '$off'" >&2
+			exit 1
+			;;
+		esac
 	else
 		echo "Skipping auth HTTP checks: curl not found" >&2
 	fi
@@ -417,6 +441,44 @@ else
 fi
 
 kill "$auth_pid" >/dev/null 2>&1 || true
+
+# With -A every connection is authenticated as the server's own account. Both
+# DF_AUTHENTICATED and DF_AUTH_AUTO must be set, and the pre-existing bits must
+# survive: axil_set_flags() assigns rather than ors, so dropping the or would
+# clear DF_CONNECTED and remove the descriptor from iteration.
+if command -v python3 >/dev/null 2>&1; then
+	autoauth_port=$(free_port $((port + 12)))
+	$testauth -p "$autoauth_port" -C "$auth_dir" -A >/dev/null 2>&1 &
+	autoauth_pid=$!
+	note_server "$autoauth_pid"
+
+	if wait_for_port_tcp "$autoauth_port"; then
+		on=$(python3 ./test-ws.py "$autoauth_port" --flags | sed -n 's/^wsflags //p')
+		case "$on" in
+		*"auto=1"*"auth=1"*) ;;
+		*)
+			echo "Test FAILED! auth-autoauth-on: expected DF_AUTH_AUTO and DF_AUTHENTICATED set under -A, got '$on'" >&2
+			exit 1
+			;;
+		esac
+
+		# The descriptor must still be dispatched, i.e. DF_CONNECTED survived
+		# the flag write rather than being cleared by the assignment.
+		after=$(curl -sS --max-time 2 "http://127.0.0.1:$autoauth_port/disconnects" | tr -d '[:space:]')
+		[ "${after:-0}" -ge 1 ] 2>/dev/null || {
+			echo "Test FAILED! auth-autoauth-conn: request was not dispatched (DF_CONNECTED lost), disconnects='$after'" >&2
+			exit 1
+		}
+	else
+		echo "test-auth -A failed to listen on $autoauth_port" >&2
+		kill "$autoauth_pid" >/dev/null 2>&1 || true
+		exit 1
+	fi
+
+	kill "$autoauth_pid" >/dev/null 2>&1 || true
+else
+	echo "Skipping -A auth checks: python3 not found" >&2
+fi
 
 route_port=$(free_port $((port + 15)))
 route_dir=$(mktemp -d)
@@ -631,6 +693,14 @@ if wait_for_port_tcp "$route_port"; then
 				assert_contains "ws-frame-echo-${t9_n}${t9_flag:-plain}" "ws=ok" \
 					sh -c "python3 ./test-split.py --ws-echo $route_port /ws-frames $t9_n $t9_flag"
 			done
+
+			# T9/S6.7: exactly one Close frame for a client-initiated close.
+			# ws_read() echoes one and axil_close() then sent a second, which
+			# a browser rejects as "Close received after close". The `16:--close`
+			# case above already fails if a second frame follows the echo; this
+			# names the property.
+			assert_contains ws-frame-close-once "second=none" \
+				sh -c "python3 ./test-split.py --ws-echo $route_port /ws-frames 16 --close"
 
 			# T9/S1.4: the upgrade request must be dispatched exactly once per
 			# connection, not once per frame. The pattern omits the slash after

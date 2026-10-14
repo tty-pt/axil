@@ -29,6 +29,17 @@ typedef SOCKET socket_t;
 typedef int socket_t;
 #endif
 
+/* Bounds for every [FD_SETSIZE]-indexed table (descr_map, io, frame_map,
+ * ws_flags). The check has to come before the first index, not after the
+ * frame has already been touched. On Windows socket_t is the unsigned
+ * SOCKET, so ">= 0" would be a tautology; INVALID_SOCKET (~0) is rejected
+ * by the "< FD_SETSIZE" half instead. */
+#ifdef _WIN32
+#define FD_VALID(fd) ((fd) < FD_SETSIZE)
+#else
+#define FD_VALID(fd) ((fd) >= 0 && (fd) < FD_SETSIZE)
+#endif
+
 /** Max key size for request environment. */
 #define ENV_KEY_LEN 128
 /** Maximum environment string size. */
@@ -60,6 +71,12 @@ enum descr_flags {
 	DF_HEAD = 1024,
 	/** Response deferred: headers sent, body pending axil_respond_defer_finish/done. */
 	DF_DEFERRED = 2048,
+	/** The identity in REMOTE_USER was published by AXIL_AUTOAUTH (-A), not
+	 *  asserted by a user. -A authenticates every connection as the server's own
+	 *  account, so any downstream authorization that trusts REMOTE_USER must
+	 *  refuse a descriptor carrying this flag. Set only by AXIL_AUTOAUTH, so it
+	 *  cannot survive descriptor reuse. */
+	DF_AUTH_AUTO = 4096,
 };
 
 /** Server configuration flags. */
@@ -208,6 +225,16 @@ int axil_ws_close(socket_t fd);
 int axil_ws_printf(socket_t fd, const char *fmt, ...);
 
 /* define these */
+/** Called once after startup's `-C` chroot/chdir and before any bind.
+ *
+ *  libaxil fires it from axil_init(), between the platform's init_pre_bind()
+ *  (which does the chroot/chdir) and axil_bind(). That window is the whole
+ *  point: the filesystem view has already changed, no socket is listening
+ *  yet, so a module loading content here resolves every path inside the jail
+ *  and finishes before the first request can be served. The axil binary
+ *  forwards it to the composable `on_axil_post_chroot` XY hook (axil-xy.h);
+ *  a host that does not define this symbol simply never fires it. */
+extern int axil_post_chroot(void) WEAK;
 /** Periodic update hook. */
 extern void axil_update(unsigned long long dt) WEAK;
 /** Called when a command is not found. */
@@ -220,14 +247,18 @@ extern int axil_connect(socket_t fd) WEAK;
 /** Called on disconnect.
  *
  *  Fires whenever a descriptor is torn down, not only when a peer hangs up --
- *  axil_close() and a failed read both reach it.
+ *  axil_close() and a failed read both reach it. It fires for unauthenticated
+ *  descriptors too, and deliberately so: a module may attach a pty and spawn a
+ *  child to a raw telnet terminal or a /tty GET, long before any authentication
+ *  happens, so a hook gated on auth or on DF_CONNECTED would never clean those
+ *  up. Because fd numbers are reused, anything a module keys by fd must be
+ *  released here or it will attach itself to an unrelated later connection.
  *
  *  It also fires for a connection that was only ever HTTP-authenticated, which
  *  has no pty and no upstream: axil_auth() marks the descriptor
- *  DF_CONNECTED, and DF_CONNECTED is what gates the hook. Such a descriptor
- *  also enters DESCR_ITER, so axil_wall() broadcasts to it. That is
- *  deliberate -- a module cannot tell an authenticated-but-pty-less connection
- *  from any other -- but it means a hook here must tolerate a missing pty and a
+ *  DF_CONNECTED, and that descriptor also enters DESCR_ITER, so axil_wall()
+ *  broadcasts to it. A module cannot tell an authenticated-but-pty-less
+ *  connection from any other, so a hook here must tolerate a missing pty and a
  *  missing upstream rather than assuming a module connection shape. */
 extern void axil_disconnect(socket_t fd) WEAK;
 /** Called before a registered command handler. */
@@ -258,6 +289,18 @@ axil_cb_t do_GET, do_POST, do_PUT, do_DELETE, do_HEAD;
 
 /** Get descriptor flags. */
 int axil_flags(socket_t fd);
+/** Get the per-connection generation of a descriptor.
+ *
+ *  A new value every accept, monotonic, never reused for a different
+ *  connection. Because fd numbers are recycled, a module that keeps state keyed
+ *  by fd should record this when it creates the state and refuse to act when it
+ *  no longer matches -- that is what makes a leaked entry inert instead of
+ *  silently attaching itself to an unrelated connection. Store it in whatever
+ *  type the module's state uses; unsigned long long round-trips exactly.
+ *
+ *  Zero means "not a live descriptor", and is what a freshly zeroed slot reads
+ *  as, so a default-initialised state can never match a real connection. */
+unsigned long long axil_generation(socket_t fd);
 /** Close a descriptor. */
 void axil_close(socket_t fd);
 /** Set descriptor flags. */

@@ -43,7 +43,9 @@ verifies Sec-WebSocket-Accept, sends N bytes as a real masked frame, and reads
 the reply frame back. Flags:
   --split       send header and payload as two TCP segments with a pause, so
                 ws_fill() has to loop and reassemble
-  --close       send a close frame (opcode 8) instead of data
+  --close       send a close frame (opcode 8) instead of data. Requires the
+                echo AND that no second frame follows it (S6.7: one Close per
+                connection, or a browser fails with "Close received after close")
   --unmask      clear the MASK bit, which a server must reject (S6.3)
   --send-only   do not wait for a reply frame; just report that the frame went
                 out. Needed for /ws-unwatched, where the server is *expected* to
@@ -181,7 +183,7 @@ class WsConn:
 
 
 def _print_ws(out):
-    for k in ("handshake", "accept", "sent", "recv", "close", "echo", "ws"):
+    for k in ("handshake", "accept", "sent", "recv", "close", "second", "echo", "ws"):
         if k in out:
             print(f"{k}={out[k]}")
 
@@ -252,6 +254,26 @@ def ws_echo(port, path, size, do_split, do_close, do_unmask, send_only):
             except EOFError:
                 out["close"] = "eof"
                 out["ws"] = "BAD(eof-without-close-echo)"
+
+            # S6.7: exactly one Close frame. The echo in ws_read() and the
+            # teardown in axil_close()/axil_ws_close() are separate calls on the
+            # same fd, so the server used to send the close twice; a browser
+            # reports the second as "Close received after close" and fails the
+            # socket. Once the echo has been read the peer must send nothing
+            # more: a second frame fails, EOF -- or the read timing out with the
+            # connection still open -- is correct.
+            if str(out.get("close", "")).isdigit():
+                sock.settimeout(1.0)
+                try:
+                    _fin2, op2, _masked2, body2 = conn.read_frame()
+                    out["second"] = (f"close:{struct.unpack('!H', body2)[0]}"
+                                     if op2 == WS_OP_CLOSE and len(body2) == 2
+                                     else f"op:{op2}")
+                    out["ws"] = f"BAD(second-frame:{out['second']})"
+                except (socket.timeout, TimeoutError):
+                    out["second"] = "none"
+                except EOFError:
+                    out["second"] = "none"
         elif do_unmask:
             # S6.3: an unmasked client frame is a protocol error. The 4-byte
             # mask key used to be read before the MASK bit was tested, so the
