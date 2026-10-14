@@ -214,7 +214,7 @@ static char *static_mapping_resolve(
 	*glob = '\0';
 	len = snprintf(root_spec, sizeof(root_spec), "./%s", start);
 	if (len < 0 || (size_t)len >= sizeof(root_spec) ||
-	    !realpath(root_spec, root))
+	    !qsys_realpath(root_spec, root))
 	{
 		*glob = saved;
 		return NULL;
@@ -223,7 +223,7 @@ static char *static_mapping_resolve(
 	        candidate, sizeof(candidate), "./%s/%s", start, path + offset);
 	*glob = saved;
 	if (len < 0 || (size_t)len >= sizeof(candidate) ||
-	    !realpath(candidate, resolved) || strlen(resolved) >= output_len)
+	    !qsys_realpath(candidate, resolved) || strlen(resolved) >= output_len)
 		return NULL;
 	strcpy(output, resolved);
 

@@ -33,6 +33,8 @@ libaxil-obj-y-MingW := src/axil-win.o
 libaxil-obj-y-MinGW64 := src/axil-win.o
 libaxil-obj-y := src/axil-status.o src/axil-encode.o
 
+add-prefix := ../libqsys ../libcorm ../libxylem
+
 -include ../mk/include.mk
 
 test: all

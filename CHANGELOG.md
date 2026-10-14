@@ -1,33 +1,11 @@
-## Unreleased
-
-- **Framed responses: `Content-Length` + `Connection: close` on every
-  `axil_respond()`.** Responses previously carried no body framing, so a
-  client could only delimit the body by connection close -- over TLS that
-  requires `close_notify`, which was never sent either. Strict clients
-  (OpenSSL 3.5+, current browsers) discarded such responses as truncated,
-  taking `Set-Cookie` with them (observed live: a login 303 that neither
-  logged in nor errored). 1xx/204/304 stay length-free per RFC 9110, and
-  the 101 upgrade path bypasses `axil_respond()` untouched. Explicitly set
-  lengths are respected, never duplicated.
-- **Best-effort TLS `close_notify` on teardown.** `axil_ssl_drop()` now
-  runs up to two non-blocking `SSL_shutdown()` calls before `SSL_free()`,
-  so the FIN is preceded by `close_notify` and a fully received response
-  is accepted instead of discarded.
-
 ## 1.5.0
 
-- **Teardown is ungated: an unauthenticated connection is now cleaned up.**
-  `axil_disconnect()` no longer requires `DF_AUTHENTICATED` and `axil_close()`
-  no longer requires `DF_CONNECTED`. The two gates contradicted the documented
-  contract ("fires whenever a descriptor is torn down") and their net effect
-  was unauthenticated RCE as the server user: a connection that owned a PTY but
-  was never authenticated — a raw telnet terminal, a non-upgraded `/tty` — was
-  never cleaned up, so its PTY, live child and `mux_state` entry outlived it,
-  the kernel recycled the fd number onto an unrelated request, and
-  `axil_tty_input()` wrote that request's bytes straight into the leaked
-  shell's PTY (the HTTP headers-as-commands symptom in SECURITY.md S5.4).
-  Every hook now self-gates on the descriptors it does not own, which is what
-  the header contract already required of them. The old leak mechanics are
+- **Framed responses: `Content-Length` + `Connection: close` on every `axil_respond()`.** Responses previously carried no body framing, so a client could only delimit the body by connection close -- over TLS that requires `close_notify`, which was never sent either. Strict clients (OpenSSL 3.5+, modern browsers) discarded such responses as truncated, dropping `Set-Cookie` with them. 1xx/204/304 stay length-free per RFC 9110, and 101 upgrade paths bypass `axil_respond()` untouched. Explicitly set lengths are respected, never duplicated.
+- **Best-effort TLS `close_notify` on teardown.** `axil_ssl_drop()` now runs up to two non-blocking `SSL_shutdown()` calls before `SSL_free()`, ensuring clean TLS connection termination.
+- **Teardown is ungated: unauthenticated connection cleanup (SECURITY S5.4)**. `axil_disconnect()` no longer requires `DF_AUTHENTICATED` and `axil_close()` no longer requires `DF_CONNECTED`. Resolves socket and PTY leakage vulnerabilities where unauthenticated descriptors outlived their TCP connection.
+- **Per-connection generation tracking**: Generational tracking on connection descriptors to eliminate stale hook dispatch and race conditions during rapid reconnects.
+- **Fixed 303 Redirect Connection Teardown**: Fixed connection closing and cookie persistence issues on HTTP 303 See Other redirects.
+- **Post-Chroot Module Loading**: Improved path canonicalization and search mechanics for dynamic modules running post-chroot.
   kept as a regression: an AUTHENTICATED PTY connection killed abruptly must
   still leave no live child, no PTY master, and clean HTTP on recycled fds.
 - **Per-connection generation: `axil_generation()`.** `struct descr` grows a
