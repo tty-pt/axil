@@ -248,19 +248,21 @@ ws_close_status(socket_t cfd, unsigned status)
 	/* One Close per connection (RFC 6455 5.5.1). The echo in ws_read() and the
 	 * teardown in axil_close()/axil_ws_close() are separate calls on the same
 	 * fd, so without this the peer gets two Close frames and the browser
-	 * reports "Close received after close". The first call already reset the
-	 * frame, so returning here leaks nothing. */
-	if (ws_flags[cfd] & WS_CLOSE_SENT)
-		return;
+	 * reports "Close received after close". A repeat still resets the frame
+	 * below: the failed header must be dropped so the next read consumes fresh
+	 * bytes (and can reach EAGAIN and close), not re-test these two forever. */
+	int already = (ws_flags[cfd] & WS_CLOSE_SENT) != 0;
 	ws_flags[cfd] |= WS_CLOSE_SENT;
 
-	frame[0] = WS_FIN_CLOSE;
-	frame[1] = 0x02;
-	frame[2] = (unsigned char) (status >> 8);
-	frame[3] = (unsigned char) (status & 0xff);
+	if (!already) {
+		frame[0] = WS_FIN_CLOSE;
+		frame[1] = 0x02;
+		frame[2] = (unsigned char) (status >> 8);
+		frame[3] = (unsigned char) (status & 0xff);
 
-	if (io[cfd].lower_write(cfd, frame, sizeof(frame), 0) != (ssize_t)sizeof(frame))
-		WARN("ws_close %d: close frame not delivered\n", cfd);
+		if (io[cfd].lower_write(cfd, frame, sizeof(frame), 0) != (ssize_t)sizeof(frame))
+			WARN("ws_close %d: close frame not delivered\n", cfd);
+	}
 
 	/* Drop any partially received frame: axil_close() frees d->remaining before
 	 * calling us, so without this the payload stayed allocated for the lifetime
