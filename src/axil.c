@@ -78,7 +78,7 @@
  * axil -p 80                                       # daemonized HTTP server
  * sudo axil -C /var/www -K certs.txt -d           # HTTPS from cert file
  * axil -d -p 8080 -k example.com:cert.pem:key.pem # single TLS mapping
- * axil -A -d -p 4242 -m libaxil-qllm              # auto-auth WS + module
+ * axil -A -d -p 4242 -m libaxil-auren              # auto-auth WS + module
  * ```
  *
  * ## Notes
