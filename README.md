@@ -15,8 +15,20 @@ Axil is an ultra-fast, single-threaded POSIX network daemon engineered for minim
 
 ---
 
+## Why Axil? (The Unix Philosophy Web Server)
+
+Building high-throughput network services in C often forces an unpleasant choice: microscopic toy libraries that crash under real concurrency, or massive multi-threaded frameworks with complex async/await state machines and hidden heap allocations.
+
+`axil` takes a different path:
+- **Zero Hidden Allocations**: A single-threaded, non-blocking POSIX event loop handling thousands of concurrent HTTP and WebSocket connections with minimal CPU cache thrashing and predictable memory use.
+- **True Shared-Module Modularity (`-m`)**: Load REST APIs, authentication layers, terminal bridges, or game engines dynamically at startup without recompiling the daemon.
+- **Production Hardening Out of the Box**: Chroot jail isolation (`-c`), privilege dropping (`-u www`), automatic `Content-Length` framing to prevent HTTP request smuggling, and instant teardown (S5.4) of abusive or malformed connections.
+
+---
+
 ## Contents
 
+- [Why Axil? (The Unix Philosophy Web Server)](#why-axil-the-unix-philosophy-web-server)
 - [Modular Architecture (-m)](#modular-architecture--m)
 - [CLI Options Reference](#cli-options-reference)
 - [Quickstart: HTTP & WebSocket Server](#quickstart-http--websocket-server)
