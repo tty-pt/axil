@@ -1,4 +1,13 @@
-## 1.5.0
+## [1.6.0]
+
+- **Canonical Browser WebSocket Bridge (`htdocs/axil-bridge.js`)**:
+  - Shipped single-source, zero-dependency browser WebSocket bus with auto-reconnect, exponential backoff, port-scoped channel routing, and telemetry logging.
+- **WebSocket Channel Multiplexing (`include/ttypt/axil-ws.h`)**:
+  - Standardized channel multiplexing definitions: Stream 0 (Text/ANSI TTY), Stream 1 (Binary BCP `#b`), Stream 2 (JSON/RPC).
+- **Capability Allowlist & Dynamic Module Imports**:
+  - Updated WASM allowed imports (`wasm-allowed-imports.lst`) ensuring strict guest/host boundaries.
+
+## [1.5.0]
 
 - **Framed responses: `Content-Length` + `Connection: close` on every `axil_respond()`.** Responses previously carried no body framing, so a client could only delimit the body by connection close -- over TLS that requires `close_notify`, which was never sent either. Strict clients (OpenSSL 3.5+, modern browsers) discarded such responses as truncated, dropping `Set-Cookie` with them. 1xx/204/304 stay length-free per RFC 9110, and 101 upgrade paths bypass `axil_respond()` untouched. Explicitly set lengths are respected, never duplicated.
 - **Best-effort TLS `close_notify` on teardown.** `axil_ssl_drop()` now runs up to two non-blocking `SSL_shutdown()` calls before `SSL_free()`, ensuring clean TLS connection termination.

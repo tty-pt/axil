@@ -260,37 +260,63 @@ main(int argc, char *argv[])
 	return 0;
 }
 
+static int find_cookie_val(const char *cookie, const char *name, char *out, size_t out_len) {
+	if (!cookie || !name || !out || out_len == 0) return -1;
+	size_t nlen = strlen(name);
+	const char *p = cookie;
+	while (p && *p) {
+		while (*p == ' ' || *p == '\t') p++;
+		const char *eq = strchr(p, '=');
+		if (!eq) break;
+		if ((size_t)(eq - p) == nlen && strncmp(p, name, nlen) == 0) {
+			eq++;
+			const char *end = strchr(eq, ';');
+			if (end) {
+				size_t len = (size_t)(end - eq);
+				if (len >= out_len) len = out_len - 1;
+				strncpy(out, eq, len);
+				out[len] = '\0';
+			} else {
+				strncpy(out, eq, out_len - 1);
+				out[out_len - 1] = '\0';
+			}
+			return 0;
+		}
+		p = strchr(eq, ';');
+		if (p) p++;
+	}
+	return -1;
+}
+
 char *axil_auth_check(socket_t fd) {
 	static char token[BUFSIZ];
-	char cookie[ENV_VALUE_LEN], *p, *eq, *end;
+	char cookie[ENV_VALUE_LEN];
 	const char *username;
 
 	if (axil_env_get(fd, cookie, sizeof(cookie), "HTTP_COOKIE"))
 		return NULL;
 
-	/* Find QSESSION=<token> among potentially multiple cookies */
-	p = cookie;
-	while (p && *p) {
-		while (*p == ' ') p++;
-		eq = strchr(p, '=');
-		if (!eq) break;
-		if (eq - p == 8 && strncmp(p, "QSESSION", 8) == 0) {
-			eq++;
-			end = strchr(eq, ';');
-			if (end) {
-				size_t len = (size_t)(end - eq);
-				if (len >= sizeof(token)) len = sizeof(token) - 1;
-				strncpy(token, eq, len);
-				token[len] = '\0';
-			} else {
-				strncpy(token, eq, sizeof(token) - 1);
-				token[sizeof(token) - 1] = '\0';
-			}
+	char cookie_name[64] = "QSESSION";
+	const char *env_cookie = getenv("AXIL_COOKIE_NAME");
+	if (env_cookie && *env_cookie) {
+		strncpy(cookie_name, env_cookie, sizeof(cookie_name) - 1);
+		cookie_name[sizeof(cookie_name) - 1] = '\0';
+	} else if (axil_config.port != 0 && axil_config.port != 80 && axil_config.port != 443 && axil_config.port != 8080) {
+		snprintf(cookie_name, sizeof(cookie_name), "QSESSION_%u", axil_config.port);
+	}
+
+	/* 1. Check primary (port-qualified or configured) cookie name */
+	if (find_cookie_val(cookie, cookie_name, token, sizeof(token)) == 0) {
+		username = get_session_user(token);
+		if (username) return (char *)username;
+	}
+
+	/* 2. Fall back to standard QSESSION if primary was port-qualified */
+	if (strcmp(cookie_name, "QSESSION") != 0) {
+		if (find_cookie_val(cookie, "QSESSION", token, sizeof(token)) == 0) {
 			username = get_session_user(token);
-			return username ? (char *)username : NULL;
+			if (username) return (char *)username;
 		}
-		p = strchr(eq, ';');
-		if (p) p++;
 	}
 
 	return NULL;

@@ -138,6 +138,18 @@ axil -d -p 8080
 
 ---
 
+## Browser WebSocket Bridge (`axil-bridge.js`) & Channel Multiplexing
+
+Axil ships a zero-dependency, single-source client transport bus at `htdocs/axil-bridge.js` for browser-side WebSocket multiplexing with exponential backoff and telemetry logging:
+
+- **Port-Scoped Connection Bus**: Automatically namespaces socket instances by origin host and port (`window.__axil_ws`), allowing multi-daemon frontends on different local ports without cross-connection interference.
+- **Unified Channel Multiplexing (`<ttypt/axil-ws.h>`)**: Multiplexes disparate application streams over a single persistent WebSocket connection:
+  * **Stream 0 (Text / ANSI TTY)**: Raw terminal character stream routed directly to terminal sinks (`xterm.js`).
+  * **Stream 1 (Binary BCP `#b`)**: High-throughput Binary Client Protocol frames prefixed with the `#b` magic header.
+  * **Stream 2 (JSON / RPC)**: Framed RPC commands and JSON payloads (`0xAA` prefix).
+
+---
+
 ## Installation & Build
 
 ### Prebuilt Packages
