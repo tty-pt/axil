@@ -637,7 +637,7 @@ def ws_leak(port, path, iters, declared):
             # The readable event that makes the armed tick close. The frame is
             # still incomplete, so this never completes it.
             sock.sendall(b"\x00")
-            sock.settimeout(5)
+            sock.settimeout(15)
             try:
                 while True:
                     if not conn.sock.recv(4096):

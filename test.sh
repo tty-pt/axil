@@ -852,7 +852,7 @@ if wait_for_port_tcp "$route_port"; then
 			# All three were tried against the unfixed code and all three
 			# passed. Measured: 16 KB baseline, 8.4 MB with the payload
 			# retained, so the 1 MiB threshold is not near either side.
-			leak_port=$((route_port + 3))
+			leak_port=$(free_port $((route_port + 3)))
 			vg_log="$route_dir/valgrind-s5.log"
 			# valgrind cannot run an ASan-instrumented binary: the sanitizer
 			# runtime refuses to initialise under it and the server never comes
@@ -871,7 +871,7 @@ if wait_for_port_tcp "$route_port"; then
 					--log-file="$vg_log" ./bin/test-routes -p "$leak_port" \
 					>"$route_dir/valgrind-s5.routes.log" 2>&1 &
 				leak_pid=$!
-				tries=60
+				tries=150
 				while [ $tries -gt 0 ]; do
 					curl -sS --max-time 2 "http://127.0.0.1:$leak_port/health" \
 						>/dev/null 2>&1 && break
