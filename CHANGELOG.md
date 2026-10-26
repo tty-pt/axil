@@ -1,4 +1,4 @@
-## [1.6.0]
+## [1.7.0]
 
 <p align="center">
   <img src="https://raw.githubusercontent.com/tty-pt/axil/main/assets/logo.png" alt="axil logo" width="220" />
