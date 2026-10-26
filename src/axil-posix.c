@@ -405,6 +405,7 @@ static struct passwd *drop_priviledges(socket_t fd)
 {
 	struct descr *d = &descr_map[fd];
 	int euid = geteuid();
+	struct passwd *pw = (d->flags & DF_AUTHENTICATED) ? &d->pw : &axil_pw;
 
 	/* -A publishes the server's own identity on every descriptor, so a child
 	 * spawned here would run as the operator while the request proved nothing.
@@ -414,12 +415,13 @@ static struct passwd *drop_priviledges(socket_t fd)
 	 * there is no identity to resolve for them, and the caller names an
 	 * explicit program rather than a login shell. */
 	if (d->flags & DF_AUTH_AUTO) {
+		if (euid != 0) {
+			return pw;
+		}
 		WARN("drop_priviledges %d: refusing child under -A-published identity\n",
 		     fd);
 		return NULL;
 	}
-
-	struct passwd *pw = (d->flags & DF_AUTHENTICATED) ? &d->pw : &axil_pw;
 
 	if (!axil_config.chroot) {
 		WARN("NOT_CHROOTED - running with %s\n", pw->pw_name);
