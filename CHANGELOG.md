@@ -1,9 +1,5 @@
 ## [1.7.0]
 
-<p align="center">
-  <img src="https://raw.githubusercontent.com/tty-pt/axil/main/assets/logo.png" alt="axil logo" width="220" />
-</p>
-
 - **Canonical Browser WebSocket Bridge (`htdocs/axil-bridge.js`)**:
   - Shipped single-source, zero-dependency browser WebSocket bus with auto-reconnect, exponential backoff, port-scoped channel routing, and telemetry logging.
 - **WebSocket Channel Multiplexing (`include/ttypt/axil-ws.h`)**:
