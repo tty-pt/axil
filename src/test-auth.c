@@ -171,7 +171,7 @@ auth_unknown_handler(socket_t fd, char *body)
  * stored, not the privilege result. REMOTE_USER goes into d->env_hd, which is
  * corm_open(..., CM_STR, CM_STR, ...) (libaxil.c:803), so corm measures the
  * value with a plain strlen and stores exactly that many bytes; axil_env_get()
- * reads it back through qsys_strlcpy(). So a correctly terminated truncated name
+ * reads it back through stl_strlcpy(). So a correctly terminated truncated name
  * reads back as exactly 8191, and the unterminated one reads back as 8192 or
  * more -- the over-read runs into d->remaining, which is NULL on a fresh
  * connection, so it normally stops right there.

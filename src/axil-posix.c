@@ -50,7 +50,7 @@ int initgroups(const char *, gid_t); /* OpenBSD uses gid_t */
 #define ECHOCTL 0
 #endif
 
-#include "../include/ttypt/qsys.h"
+#include <ttypt/stele.h>
 #include "../include/ttypt/corm.h"
 
 static char *statics_mmap;
@@ -214,7 +214,7 @@ static char *static_mapping_resolve(
 	*glob = '\0';
 	len = snprintf(root_spec, sizeof(root_spec), "./%s", start);
 	if (len < 0 || (size_t)len >= sizeof(root_spec) ||
-	    !qsys_realpath(root_spec, root))
+	    !stl_realpath(root_spec, root))
 	{
 		*glob = saved;
 		return NULL;
@@ -223,7 +223,7 @@ static char *static_mapping_resolve(
 	        candidate, sizeof(candidate), "./%s/%s", start, path + offset);
 	*glob = saved;
 	if (len < 0 || (size_t)len >= sizeof(candidate) ||
-	    !qsys_realpath(candidate, resolved) || strlen(resolved) >= output_len)
+	    !stl_realpath(candidate, resolved) || strlen(resolved) >= output_len)
 		return NULL;
 	strcpy(output, resolved);
 
