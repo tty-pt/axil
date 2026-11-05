@@ -1950,7 +1950,8 @@ static char *env_sane(char *str)
 	     (((unsigned char)*str >= 0x80) || isalnum((unsigned char)*str) ||
 	      *str == '/' || *str == '+' || *str == '%' || *str == '&' ||
 	      *str == '_' || *str == '-' || *str == ' ' || *str == '=' ||
-	      *str == ';' || *str == '.' || *str == '"');
+	      *str == ';' || *str == '.' || *str == '"' || *str == ':' ||
+	      *str == ',' || *str == '@' || *str == '~');
 	     str++, b++)
 		*b = *str;
 	*b = '\0';
