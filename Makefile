@@ -3,13 +3,13 @@ INSTALL_BIN := axil
 
 LDLIBS-libaxil-Linux := -lrt
 LDLIBS-libaxil-OpenBSD := -liconv
-LDLIBS-libaxil := -lcorm -lqsys -lcrypto -lssl -lxylem
+LDLIBS-libaxil := -lcorm -lstele -lcrypto -lssl -lxylem
 LDFLAGS-libaxil-Darwin := -undefined dynamic_lookup
 LDLIBS-libaxil-Linux := -lc
 LDLIBS-libaxil-Windows := -lws2_32 -liconv
-LDLIBS-axil := -laxil -lxylem -lqsys
+LDLIBS-axil := -laxil -lxylem -lstele
 LDLIBS-test := -laxil
-LDLIBS-test-auth := -laxil -lqsys -lxylem
+LDLIBS-test-auth := -laxil -lstele -lxylem
 LDLIBS-test-routes := -laxil -lcrypto
 # The only OpenSSL use in test-routes is the WebSocket upstream child, which is
 # #ifndef _WIN32, and mingw has no -lcrypto.
@@ -32,8 +32,6 @@ libaxil-obj-y-Msys := src/axil-win.o
 libaxil-obj-y-MingW := src/axil-win.o
 libaxil-obj-y-MinGW64 := src/axil-win.o
 libaxil-obj-y := src/axil-status.o src/axil-encode.o
-
-add-prefix := ../libqsys ../libcorm ../libxylem
 
 -include ../mk/include.mk
 

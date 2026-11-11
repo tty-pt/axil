@@ -19,7 +19,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/types.h>
-#include <ttypt/qsys.h>
+#include <ttypt/stele.h>
 
 #ifdef _WIN32
 #include <winsock2.h>

@@ -18,7 +18,7 @@ jobs:
       deps_brew: "libcorm,libxylem,openssl"
       deps_openbsd: "libcorm,libxylem,openssl"
       deps_winget: "mingw-w64-x86_64-openssl,mingw-w64-x86_64-libiconv"
-      deps_winget_tty: "libqsys,libcorm,libxylem"
+      deps_winget_tty: "libstele,libcorm,libxylem"
       publish_to: "deb,apk,rpm,brew,openbsd,winget"
     secrets:
       HOST: ${{ secrets.OPENBSD_HOST }}

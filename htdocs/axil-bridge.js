@@ -1,6 +1,6 @@
 /*
- * axil-bridge.js — Canonical browser WebAssembly bridge for axil network transport.
- * Provides the "axil" WASM capability module with single persistent socket multiplexing.
+ * bridge.js — Browser WebAssembly bridge for axil network transport.
+ * Provides the "axil" and "axil-ws" capability module with single persistent socket multiplexing.
  */
 
 function readWasmStr(memory, ptr, len) {
@@ -33,9 +33,14 @@ export function createAxilBridge(root, getWasm) {
 				socket: null,
 				status: 0, // 0: CLOSED, 1: CONNECTING, 2: OPEN, 3: CLOSING
 				subscribers: new Set(),
+				channelSubscribers: new Map([
+					[0, new Set()],
+					[1, new Set()],
+					[2, new Set()]
+				]),
 				backlog: [],
 				send(data) {
-					if (this.socket && this.socket.readyState === WebSocket.OPEN) {
+					if (this.socket && this.socket.readyState === (typeof WebSocket !== 'undefined' ? WebSocket.OPEN : 1)) {
 						this.socket.send(data);
 						return true;
 					}
@@ -49,13 +54,36 @@ export function createAxilBridge(root, getWasm) {
 						}
 					}
 					return () => this.subscribers.delete(cb);
+				},
+				subscribeChannel(chan, cb) {
+					let set = this.channelSubscribers.get(chan);
+					if (!set) {
+						set = new Set();
+						this.channelSubscribers.set(chan, set);
+					}
+					set.add(cb);
+					return () => set.delete(cb);
 				}
 			};
 		}
 		window.__axil_ws = window.__axil_ws_instances[hostKey];
 	}
 
-	const bus = (typeof window !== 'undefined' && window.__axil_ws_instances) ? window.__axil_ws_instances[hostKey] : window.__axil_ws;
+	const bus = (typeof window !== 'undefined' && window.__axil_ws_instances) ? window.__axil_ws_instances[hostKey] : {
+		socket: null,
+		status: 0,
+		subscribers: new Set(),
+		channelSubscribers: new Map([[0, new Set()], [1, new Set()], [2, new Set()]]),
+		backlog: [],
+		send() { return false; },
+		subscribe(cb) { this.subscribers.add(cb); return () => this.subscribers.delete(cb); },
+		subscribeChannel(chan, cb) {
+			let set = this.channelSubscribers.get(chan);
+			if (!set) { set = new Set(); this.channelSubscribers.set(chan, set); }
+			set.add(cb);
+			return () => set.delete(cb);
+		}
+	};
 
 	function connect(url) {
 		if (!url) return;
@@ -72,11 +100,15 @@ export function createAxilBridge(root, getWasm) {
 		}
 
 		bus.status = 1; // CONNECTING
-		const target = url.startsWith('/')
-			? `${window.location.protocol === 'https:' ? 'wss:' : 'ws:'}//${window.location.host}${url}`
-			: url;
+		let target = url;
+		if (url.startsWith('/') && typeof window !== 'undefined' && window.location) {
+			target = `${window.location.protocol === 'https:' ? 'wss:' : 'ws:'}//${window.location.host}${url}`;
+		}
 
-		const sock = new WebSocket(target, ['binary']);
+		const WebSocketClass = typeof WebSocket !== 'undefined' ? WebSocket : globalThis.WebSocket;
+		if (!WebSocketClass) return;
+
+		const sock = new WebSocketClass(target, ['binary']);
 		sock.binaryType = 'arraybuffer';
 		bus.socket = sock;
 
@@ -85,12 +117,12 @@ export function createAxilBridge(root, getWasm) {
 			bus.status = 2; // OPEN
 			reconnectDelay = 1000;
 			if (lastAckSeq > 0) {
-				// Reconnection delta catchup request with last acknowledged BCP sequence
 				try {
 					sock.send(new TextEncoder().encode(`ack:${lastAckSeq}\n`));
 				} catch (_) {}
 			}
-			const fn = getExport(getWasm(), ['wasm_ws_on_open']);
+			const wasm = typeof getWasm === 'function' ? getWasm() : null;
+			const fn = getExport(wasm, ['wasm_ws_on_open']);
 			if (fn) fn();
 		};
 
@@ -106,11 +138,15 @@ export function createAxilBridge(root, getWasm) {
 				bytes = new Uint8Array(evt.data);
 			}
 
+			let channel = 0; // 0: Text, 1: BCP, 2: RPC
 			if (!isText && bytes.length >= 2 && bytes[0] === 0x23 && bytes[1] === 0x62) {
 				lastAckSeq++;
+				channel = 1;
+			} else if (!isText && bytes.length >= 2 && bytes[0] === 0x23 && bytes[1] === 0x72) {
+				channel = 2;
 			}
 
-			// Notify raw bus subscribers (e.g. terminal or inspect tools)
+			// Notify raw bus subscribers
 			if (bus.subscribers.size === 0) {
 				bus.backlog.push({ bytes, isText });
 				if (bus.backlog.length > 50) bus.backlog.shift();
@@ -120,7 +156,15 @@ export function createAxilBridge(root, getWasm) {
 				}
 			}
 
-			const wasm = getWasm();
+			// Notify channel subscribers
+			const chanSubs = bus.channelSubscribers?.get(channel);
+			if (chanSubs) {
+				for (const sub of chanSubs) {
+					try { sub(bytes, isText); } catch (_) {}
+				}
+			}
+
+			const wasm = typeof getWasm === 'function' ? getWasm() : null;
 			if (!wasm || !wasm.memory) return;
 
 			const onMsg = getExport(wasm, ['wasm_ws_on_message']);
@@ -132,17 +176,11 @@ export function createAxilBridge(root, getWasm) {
 				const ptr = malloc(bytes.length);
 				if (ptr) {
 					new Uint8Array(wasm.memory.buffer, ptr, bytes.length).set(bytes);
-
 					if (onChan) {
-						let channel = 0; // 0: Text, 1: BCP, 2: RPC
-						if (!isText && bytes.length >= 2 && bytes[0] === 0x23 && bytes[1] === 0x62) {
-							channel = 1; // Magic '#b'
-						}
 						onChan(channel, ptr, bytes.length);
 					} else if (onMsg) {
 						onMsg(ptr, bytes.length);
 					}
-
 					free(ptr);
 				}
 			}
@@ -153,7 +191,8 @@ export function createAxilBridge(root, getWasm) {
 			bus.status = 0; // CLOSED
 			bus.socket = null;
 
-			const fn = getExport(getWasm(), ['wasm_ws_on_close']);
+			const wasm = typeof getWasm === 'function' ? getWasm() : null;
+			const fn = getExport(wasm, ['wasm_ws_on_close']);
 			if (fn) fn(evt.code || 0);
 
 			if (!explicitClose && lastUrl) {
@@ -193,31 +232,40 @@ export function createAxilBridge(root, getWasm) {
 			bus.status = 0;
 		},
 		makeImports() {
+			const sendFn = (buf_ptr, buf_len) => {
+				const exports = typeof getWasm === 'function' ? getWasm() : null;
+				if (!exports || !exports.memory || !buf_ptr || buf_len <= 0) return;
+				const bytes = new Uint8Array(exports.memory.buffer, buf_ptr, buf_len);
+				let isText = true;
+				for (let i = 0; i < bytes.length; i++) {
+					const b = bytes[i];
+					if ((b < 32 && b !== 9 && b !== 10 && b !== 13) || b > 126) {
+						isText = false;
+						break;
+					}
+				}
+				if (isText) {
+					const text = new TextDecoder().decode(bytes);
+					bus.send(text);
+				} else {
+					bus.send(bytes);
+				}
+			};
+
 			return {
 				ws_connect(url_ptr, url_len) {
-					const exports = getWasm();
+					const exports = typeof getWasm === 'function' ? getWasm() : null;
 					if (!exports || !exports.memory) return;
 					const url = readWasmStr(exports.memory, url_ptr, url_len);
 					connect(url);
 				},
-				ws_send(buf_ptr, buf_len) {
-					const exports = getWasm();
-					if (!exports || !exports.memory || !buf_ptr || buf_len <= 0) return;
+				ws_send: sendFn,
+				axil_ws_send: sendFn,
+				ws_send_channel(channel, buf_ptr, buf_len) {
+					const exports = typeof getWasm === 'function' ? getWasm() : null;
+					if (!exports || !exports.memory) return;
 					const bytes = new Uint8Array(exports.memory.buffer, buf_ptr, buf_len);
 					bus.send(bytes);
-				},
-				ws_send_channel(channel, buf_ptr, buf_len) {
-					const exports = getWasm();
-					if (!exports || !exports.memory) return;
-					if (channel === 0) {
-						// Raw text channel
-						const bytes = new Uint8Array(exports.memory.buffer, buf_ptr, buf_len);
-						bus.send(bytes);
-					} else {
-						// Framed binary channel
-						const bytes = new Uint8Array(exports.memory.buffer, buf_ptr, buf_len);
-						bus.send(bytes);
-					}
 				},
 				ws_status() {
 					return bus.status;
