@@ -1,0 +1,48 @@
+{
+  "name": "@tty-pt/axil",
+  "version": "1.8.0",
+  "type": "module",
+  "description": "Universal Node.js and Browser client for axil network transport and persistent socket multiplexing",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./cap": {
+      "types": "./dist/bridge.d.ts",
+      "default": "./dist/bridge.js"
+    },
+    "./bridge": {
+      "types": "./dist/bridge.d.ts",
+      "default": "./dist/bridge.js"
+    }
+  },
+  "files": [
+    "dist",
+    "include",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "test": "node --test tests/axil.test.mjs"
+  },
+  "keywords": [
+    "axil",
+    "network",
+    "websocket",
+    "multiplexer",
+    "transport",
+    "wasm",
+    "web-hal"
+  ],
+  "author": "Paulo Quirino",
+  "license": "BSD-2-Clause",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/tty-pt/axil.git",
+    "directory": "npm"
+  },
+  "homepage": "https://tty.pt"
+}

@@ -81,7 +81,7 @@
 #include "../include/ws.h"
 
 #include <ttypt/corm.h>
-#include <ttypt/qsys.h>
+#include <ttypt/stele.h>
 
 #include "ws.c"
 
@@ -1707,7 +1707,7 @@ static void axil_init(void)
 	axil_srv_flags |= axil_config.flags | AXIL_WAKE;
 
 	if ((axil_srv_flags & AXIL_DETACH))
-		qsyslog = qsys_syslog;
+		stllog = stl_syslog;
 
 	if (axil_srv_flags & AXIL_SSL) {
 
@@ -1950,7 +1950,8 @@ static char *env_sane(char *str)
 	     (((unsigned char)*str >= 0x80) || isalnum((unsigned char)*str) ||
 	      *str == '/' || *str == '+' || *str == '%' || *str == '&' ||
 	      *str == '_' || *str == '-' || *str == ' ' || *str == '=' ||
-	      *str == ';' || *str == '.' || *str == '"');
+	      *str == ';' || *str == '.' || *str == '"' || *str == ':' ||
+	      *str == ',' || *str == '@' || *str == '~');
 	     str++, b++)
 		*b = *str;
 	*b = '\0';
@@ -1965,7 +1966,7 @@ int axil_env_get(socket_t fd, char *target, size_t dest_len, char *key)
 	if (!skey)
 		return 1;
 
-	qsys_strlcpy(target, (const char *)skey, dest_len);
+	stl_strlcpy(target, (const char *)skey, dest_len);
 	return 0;
 }
 
@@ -2208,7 +2209,7 @@ static void http_date(time_t t, char *out, size_t outlen)
 	}
 
 	struct tm tm_buf;
-	struct tm *tm_info = qsys_gmtime_r(&t, &tm_buf);
+	struct tm *tm_info = stl_gmtime_r(&t, &tm_buf);
 	if (tm_info) {
 		strftime(out, outlen, "%a, %d %b %Y %H:%M:%S GMT", tm_info);
 		if (outlen >= sizeof(cached_date)) {

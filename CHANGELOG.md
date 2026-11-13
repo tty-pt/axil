@@ -1,3 +1,15 @@
+## [Unreleased] (target: v1.8.0)
+
+### Added
+- **NPM Package `@tty-pt/axil` (`npm/dist/`)**:
+  - Packaged AxilClient with standardized Web HAL capability bridge.
+  - Added TypeScript declarations in `bridge.d.ts` and `index.d.ts`.
+  - Added Node.js test suite in `npm/tests/axil.test.mjs`.
+
+### Changed
+- **Libstele Substrate Integration**:
+  - Replaced legacy references with libstele `stl_*` interfaces across POSIX, server, and test harness code.
+
 ## [1.7.0]
 
 - **Canonical Browser WebSocket Bridge (`htdocs/axil-bridge.js`)**:

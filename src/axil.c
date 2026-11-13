@@ -101,7 +101,7 @@
 #include <unistd.h>
 #include <signal.h>
 
-#include <ttypt/qsys.h>
+#include <ttypt/stele.h>
 #include <ttypt/corm.h>
 #include <ttypt/xy.h>
 
@@ -137,7 +137,7 @@ void exit_all(int i) {
 	// close databases here
 	on_axil_exit(i);
 
-	qsys_closelog();
+	stl_closelog();
 #ifndef _WIN32
 	sync();
 #endif
@@ -153,8 +153,8 @@ void exit_all(int i) {
 static void
 segv_fault(int sig) {
 	signal(sig, SIG_DFL);
-	qsys_syslog(QLOG_ERR, "fatal signal %d -- dumping core", sig);
-	qsys_closelog();
+	stl_syslog(STL_LOG_ERR, "fatal signal %d -- dumping core", sig);
+	stl_closelog();
 	raise(sig);
 	_exit(128 + sig);
 }
@@ -182,7 +182,7 @@ main(int argc, char *argv[])
 	register char c;
 	char *mods = NULL;
 
-	qsys_openlog("axil");
+	stl_openlog("axil");
 
 	axil_config.flags |= AXIL_DETACH;
 
