@@ -1,4 +1,4 @@
-## [Unreleased] (target: v1.8.0)
+## [1.8.0] - 2026-11-13
 
 ### Added
 - **NPM Package `@tty-pt/axil` (`npm/dist/`)**:
