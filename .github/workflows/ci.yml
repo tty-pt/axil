@@ -17,16 +17,7 @@ jobs:
       deps_rpm: "libcorm,libxylem,openssl-devel"
       deps_brew: "libcorm,libxylem,openssl"
       deps_openbsd: "libcorm,libxylem,openssl"
-      deps_winget: "mingw-w64-x86_64-openssl,mingw-w64-x86_64-libiconv"
+      deps_winget: "mingw-w64-x86_64-openssl,mingw-w64-x86_64-libiconv,mingw-w64-x86_64-xxhash"
       deps_winget_tty: "libstele,libcorm,libxylem"
       publish_to: "deb,apk,rpm,brew,openbsd,winget"
-    secrets:
-      HOST: ${{ secrets.OPENBSD_HOST }}
-      USER: ${{ secrets.OPENBSD_USER }}
-      SSH_KEY: ${{ secrets.OPENBSD_SSH_KEY }}
-      GPG_PRIVATE_KEY: ${{ secrets.OPENBSD_GPG_PRIVATE_KEY }}
-      GPG_PASSPHRASE: ${{ secrets.OPENBSD_GPG_PASSPHRASE }}
-      GPG_KEYID: ${{ secrets.OPENBSD_GPG_KEY_ID }}
-      ABUILD_PRIVATE_KEY: ${{ secrets.ABUILD_PRIVATE_KEY }}
-      ABUILD_PUBLIC_KEY: ${{ secrets.ABUILD_PUBLIC_KEY }}
-      TAP_TOKEN: ${{ secrets.TAP_TOKEN }}
+    secrets: inherit

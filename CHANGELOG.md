@@ -6,6 +6,9 @@
   - Added TypeScript declarations in `bridge.d.ts` and `index.d.ts`.
   - Added Node.js test suite in `npm/tests/axil.test.mjs`.
 
+### Fixed
+- **TLS (`src/`)**: enable automatic DH parameters and the P-521 curve, retry automatically, and unify the SNI callbacks.
+
 ### Changed
 - **Libstele Substrate Integration**:
   - Replaced legacy references with libstele `stl_*` interfaces across POSIX, server, and test harness code.
