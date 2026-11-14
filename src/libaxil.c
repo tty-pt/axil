@@ -1710,7 +1710,7 @@ static void axil_init(void)
 	axil_srv_flags |= axil_config.flags | AXIL_WAKE;
 
 	if ((axil_srv_flags & AXIL_DETACH))
-		stllog = stl_syslog;
+		stllog_set(stl_syslog);
 
 	if (axil_srv_flags & AXIL_SSL) {
 
