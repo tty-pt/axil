@@ -4,6 +4,7 @@
 
 # axil
 
+[![npm](https://img.shields.io/badge/npm-@tty--pt/axil-CB3837?logo=npm)](npm/README.md)
 [![C99](https://img.shields.io/badge/C-C99-555?logo=c)](#)
 [![BSD-2-Clause](https://img.shields.io/badge/License-BSD--2--Clause-blue)](#)
 [![HTTP(S)+WS daemon](https://img.shields.io/badge/HTTP%28S%29%2BWS-daemon-4B8BBE)](#)
@@ -16,10 +17,12 @@
 ## 1. Quickstart
 
 ### Launch Server from CLI
-Start the daemon in foreground on port 8080 loading dynamic modules:
+Start the daemon in foreground on port 8080 loading dynamic modules (via system binary or npm prebuild):
 
 ```bash
 axil -d -p 8080 -m libaxil-auth -m libaxil-hyle
+# Or directly via the @tty-pt/axil N-API CLI without system C packages:
+npx @tty-pt/axil -d -p 4242 -m axil-auren
 ```
 
 ### Embed in Pure C
@@ -81,6 +84,7 @@ cc my_server.c $(pkg-config --cflags --libs axil) -o my_server
 | Function | Signature | Description |
 | :--- | :--- | :--- |
 | `axil_main` | `int axil_main(void)` | Enter non-blocking network event loop |
+| `axil_cli` | `int axil_cli(int argc, char *argv[])` | Parse CLI flags, load `-m` modules, and enter `axil_main()` |
 | `axil_register_handler` | `void axil_register_handler(path, cb)` | Map HTTP path or pattern to a handler callback |
 | `axil_respond_plain` | `void axil_respond_plain(fd, status, body)` | Send HTTP response with `text/plain` |
 | `axil_respond_json` | `void axil_respond_json(fd, status, json)` | Send HTTP response with `application/json` |
@@ -110,6 +114,24 @@ make                  # builds bin/axil and lib/libaxil.so
 make test             # run unit and integration test suite
 sudo make install     # install binary, headers, and library to system
 ```
+
+---
+
+## 6. JavaScript, WebAssembly & N-API Bindings (`@tty-pt/axil`)
+
+For browser, Node.js, and WebSocket clients—as well as zero-compile N-API daemon hosting—`axil` ships `@tty-pt/axil` on npm:
+
+```sh
+npm install @tty-pt/axil
+```
+
+- **N-API Daemon Host & CLI (`axil`)**: Bundles `axil.node` (`axil_cli`) and `bin/axil.js` with automatic `@tty-pt/*` prebuild module resolution (`-m axil-auren`) and clean background daemonization.
+- **Multiplexed WebSocket Client & WASM Bridge**: Provides `AxilClient` and `createAxilBridge` for browser and Node.js applications.
+- **Native String & HTTP Utilities**: Exposes `statusText`, `urlEncode`, `urlDecode`, `jsonEscape`, and `slugify` (accelerated via N-API in Node.js with pure-JS fallbacks for browsers).
+
+See [npm/README.md](npm/README.md) for the full CLI, N-API, TypeScript, and WebSocket bridge API reference.
+
+---
 
 ## License
 

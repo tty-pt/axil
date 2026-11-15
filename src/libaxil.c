@@ -81,7 +81,7 @@
 #include "../include/ws.h"
 
 #include <ttypt/corm.h>
-#include <ttypt/qsys.h>
+#include <ttypt/stele.h>
 
 #include "ws.c"
 
@@ -1642,11 +1642,13 @@ SSL_CTX *axil_ctx_new(char *crt, char *key)
 	CBUG(!ctx, "SSL_CTX_new\n");
 
 	SSL_CTX_set_alpn_select_cb(ctx, axil_alpn_select, NULL);
+	SSL_CTX_set_tlsext_servername_callback(ctx, axil_sni);
 
 	CBUG(!SSL_CTX_set_min_proto_version(ctx, TLS1_2_VERSION),
 	     "set_min_proto_version\n");
 
-	SSL_CTX_set_options(ctx, SSL_OP_NO_SSLv2 | SSL_OP_NO_SSLv3);
+	SSL_CTX_set_options(ctx, SSL_OP_NO_SSLv2 | SSL_OP_NO_SSLv3 | SSL_OP_CIPHER_SERVER_PREFERENCE);
+	SSL_CTX_set_mode(ctx, SSL_MODE_AUTO_RETRY);
 
 	CBUG(!SSL_CTX_set_cipher_list(
 	             ctx, "ECDHE+AESGCM:ECDHE+CHACHA20:!aNULL:!MD5:!RC4"),
@@ -1657,11 +1659,12 @@ SSL_CTX *axil_ctx_new(char *crt, char *key)
 	             "TLS_AES_128_GCM_SHA256:"
 	             "TLS_CHACHA20_POLY1305_SHA256");
 
-	CBUG(!SSL_CTX_set1_groups_list(ctx, "X25519:P-256:P-384"),
+	CBUG(!SSL_CTX_set1_groups_list(ctx, "X25519:P-256:P-384:P-521"),
 	     "set1_groups_list\n");
 
 #if OPENSSL_VERSION_NUMBER >= 0x10100000L
 	SSL_CTX_set_ecdh_auto(ctx, 1);
+	SSL_CTX_set_dh_auto(ctx, 1);
 #else
 	FILE *fp = fopen("/etc/ssl/dhparam.pem", "r");
 	CBUG(!fp, "open dhparam.pem\n");
@@ -1707,7 +1710,7 @@ static void axil_init(void)
 	axil_srv_flags |= axil_config.flags | AXIL_WAKE;
 
 	if ((axil_srv_flags & AXIL_DETACH))
-		qsyslog = qsys_syslog;
+		stllog_set(stl_syslog);
 
 	if (axil_srv_flags & AXIL_SSL) {
 
@@ -1716,11 +1719,7 @@ static void axil_init(void)
 		OpenSSL_add_all_algorithms();
 
 		const cert_t *cert = corm_get(cert_hd, domain_default);
-
-		default_ssl_ctx = axil_ctx_new(cert->crt, cert->key);
-
-		SSL_CTX_set_tlsext_servername_callback(
-		        default_ssl_ctx, axil_sni);
+		default_ssl_ctx = cert->ctx;
 
 		ERR_print_errors_cb(openssl_error_callback, NULL);
 	}
@@ -1950,7 +1949,8 @@ static char *env_sane(char *str)
 	     (((unsigned char)*str >= 0x80) || isalnum((unsigned char)*str) ||
 	      *str == '/' || *str == '+' || *str == '%' || *str == '&' ||
 	      *str == '_' || *str == '-' || *str == ' ' || *str == '=' ||
-	      *str == ';' || *str == '.' || *str == '"');
+	      *str == ';' || *str == '.' || *str == '"' || *str == ':' ||
+	      *str == ',' || *str == '@' || *str == '~');
 	     str++, b++)
 		*b = *str;
 	*b = '\0';
@@ -1965,7 +1965,7 @@ int axil_env_get(socket_t fd, char *target, size_t dest_len, char *key)
 	if (!skey)
 		return 1;
 
-	qsys_strlcpy(target, (const char *)skey, dest_len);
+	stl_strlcpy(target, (const char *)skey, dest_len);
 	return 0;
 }
 
@@ -2208,7 +2208,7 @@ static void http_date(time_t t, char *out, size_t outlen)
 	}
 
 	struct tm tm_buf;
-	struct tm *tm_info = qsys_gmtime_r(&t, &tm_buf);
+	struct tm *tm_info = stl_gmtime_r(&t, &tm_buf);
 	if (tm_info) {
 		strftime(out, outlen, "%a, %d %b %Y %H:%M:%S GMT", tm_info);
 		if (outlen >= sizeof(cached_date)) {
