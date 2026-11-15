@@ -20,7 +20,9 @@
     "./bridge": {
       "types": "./dist/bridge.d.ts",
       "default": "./dist/bridge.js"
-    }
+    },
+    "./bin/axil.js": "./bin/axil.js",
+    "./package.json": "./package.json"
   },
   "files": [
     "bin",
