@@ -5,12 +5,14 @@
   - Extracted reusable `axil_cli(int argc, char *argv[])` entry point in `src/axil.c` (with `optind = 1` reset and `#ifndef AXIL_NO_MAIN` guard on `main()`), preserving weak default hooks in `libaxil.so` while allowing both `bin/axil` and the Node-API addon to embed the full CLI and strong `axil_*` host callbacks.
   - Added Node-API native addon (`npm/native/axil_napi.c`, `npm/native/LIBS`) exposing `cli(args)`, `statusText`, `urlEncode`, `urlDecode`, `jsonEscape`, and `slugify`, loaded via `@tty-pt/stele` with `RTLD_NOW | RTLD_GLOBAL` so dynamically loaded Xylem modules (`xy_load`) resolve `libaxil`, `libxylem`, `libcorm`, `libstele`, and `struct xy_ctx xy`.
   - Added CLI executable wrapper (`npm/bin/axil.js`) and Xylem module resolver (`resolveModulePath`, `normalizeCliArgs`, `runCli` in `npm/dist/index.js`) that resolves `-m <mod>` across installed `@tty-pt/*` `prebuilds/<platform>-<arch>/` directories and spawns detached background daemons cleanly before V8/native thread pools initialize.
+- **Per-Descriptor Event Loop Tick Hook (`include/ttypt/axil.h`, `include/ttypt/axil-xy.h`, `src/axil.c`, `src/libaxil.c`)**:
+  - Added `axil_fd_tick(socket_t fd)` / `on_axil_fd_tick` hook dispatched per active descriptor during event loop ticks.
 
 ## [1.8.0] - 2026-11-14
 
 ### Added
-- **NPM Package `@tty-pt/axil` (`npm/dist/`, `npm/tests/axil.test.mjs`)**:
-  - Packaged `AxilClient` with standardized Web HAL capability bridge (`createAxilBridge`), TypeScript declarations (`bridge.d.ts`, `index.d.ts`), and Node.js test suite (`npm/tests/axil.test.mjs`).
+- **NPM Package `@tty-pt/axil` & Web HAL Capability Modules (`npm/dist/`, `htdocs/axil-cap.js`, `htdocs/axil-ws-cap.js`, `npm/tests/axil.test.mjs`)**:
+  - Packaged `AxilClient` with standardized Web HAL capability bridges (`createAxilBridge`, `htdocs/axil-cap.js`, `htdocs/axil-ws-cap.js`), TypeScript declarations (`bridge.d.ts`, `index.d.ts`), and Node.js test suite (`npm/tests/axil.test.mjs`).
 
 ### Fixed
 - **TLS (`src/`)**: enable automatic DH parameters and the P-521 curve, retry automatically, and unify the SNI callbacks.

@@ -4,7 +4,7 @@
 
 # @tty-pt/axil
 
-[![npm version](https://img.shields.io/badge/npm-v1.8.0-CB3837?logo=npm)](#)
+[![npm version](https://img.shields.io/badge/npm-v1.8.1-CB3837?logo=npm)](#)
 [![License: BSD-2-Clause](https://img.shields.io/badge/License-BSD--2--Clause-blue)](../LICENSE)
 [![TypeScript Ready](https://img.shields.io/badge/TypeScript-Ready-3178C6?logo=typescript)](#)
 [![WebAssembly](https://img.shields.io/badge/WebAssembly-Bridge-654FF0?logo=webassembly)](#)
