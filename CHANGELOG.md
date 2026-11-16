@@ -1,3 +1,47 @@
+## [1.8.4] - 2026-11-16
+
+### Fixed
+- **Xylem Module Resolution Priority (`npm/dist/index.js`)**:
+  - Updated `resolveModulePath()` to prioritize `libaxil-<shortName>` and `@tty-pt/axil-<shortName>` over base `@tty-pt/<shortName>` packages so `-m hyle` / `-m axil-hyle` and `-m auth` / `-m axil-auth` resolve to `libaxil-hyle` and `libaxil-auth` rather than `libhyle`.
+
+## [1.8.3] - 2026-11-16
+
+### Fixed
+- **Dynamic Directory Autoindex Buffer & `Content-Length` Framing (`src/libaxil.c`)**:
+  - Replaced the fixed 8 KB stack buffer in `request_handle_autoindex()` with a dynamically growing heap buffer (`calloc`/`realloc`) so directories with many entries never silently drop trailing links.
+  - Fixed the 2-byte `Content-Length` overcount (`body_len += 24` instead of `26` for `"</pre><hr></body></html>"`) that caused HTTP clients to hang waiting for 2 unreceived bytes on autoindex responses.
+- **OpenBSD Packaging Dependencies (`.github/workflows/ci.yml`)**:
+  - Added `libstele` to `deps_openbsd` (`libstele,libcorm,libxylem`) and rebuilt OpenBSD package against `libxylem` `1.8.1` and `libstele` `1.7.1`.
+
+## [1.8.2] - 2026-11-16
+
+### Changed
+- **Arch Linux (`pacman`) Packaging (`.github/workflows/ci.yml`)**:
+  - Added `pacman` to `publish_to` and `libstele` to `deps_pacman` (`libstele,libcorm,libxylem`, omitting `openssl` to avoid container partial-upgrade `libssl.so.3` mismatches) so `axil` publishes across all 7 OS targets (`deb`, `apk`, `rpm`, `pacman`, `brew`, `openbsd`, `winget`).
+
+## [1.8.1] - 2026-11-15
+
+### Added
+- **N-API Daemon Host & CLI Wrapper (`src/axil.c`, `npm/native/`, `npm/bin/axil.js`, `npm/dist/`)**:
+  - Extracted reusable `axil_cli(int argc, char *argv[])` entry point in `src/axil.c` (with `optind = 1` reset and `#ifndef AXIL_NO_MAIN` guard on `main()`), preserving weak default hooks in `libaxil.so` while allowing both `bin/axil` and the Node-API addon to embed the full CLI and strong `axil_*` host callbacks.
+  - Added Node-API native addon (`npm/native/axil_napi.c`, `npm/native/LIBS`) exposing `cli(args)`, `statusText`, `urlEncode`, `urlDecode`, `jsonEscape`, and `slugify`, loaded via `@tty-pt/stele` with `RTLD_NOW | RTLD_GLOBAL` so dynamically loaded Xylem modules (`xy_load`) resolve `libaxil`, `libxylem`, `libcorm`, `libstele`, and `struct xy_ctx xy`.
+  - Added CLI executable wrapper (`npm/bin/axil.js`) and Xylem module resolver (`resolveModulePath`, `normalizeCliArgs`, `runCli` in `npm/dist/index.js`) that resolves `-m <mod>` across installed `@tty-pt/*` `prebuilds/<platform>-<arch>/` directories and spawns detached background daemons cleanly before V8/native thread pools initialize.
+- **Per-Descriptor Event Loop Tick Hook (`include/ttypt/axil.h`, `include/ttypt/axil-xy.h`, `src/axil.c`, `src/libaxil.c`)**:
+  - Added `axil_fd_tick(socket_t fd)` / `on_axil_fd_tick` hook dispatched per active descriptor during event loop ticks.
+
+## [1.8.0] - 2026-11-14
+
+### Added
+- **NPM Package `@tty-pt/axil` & Web HAL Capability Modules (`npm/dist/`, `htdocs/axil-cap.js`, `htdocs/axil-ws-cap.js`, `npm/tests/axil.test.mjs`)**:
+  - Packaged `AxilClient` with standardized Web HAL capability bridges (`createAxilBridge`, `htdocs/axil-cap.js`, `htdocs/axil-ws-cap.js`), TypeScript declarations (`bridge.d.ts`, `index.d.ts`), and Node.js test suite (`npm/tests/axil.test.mjs`).
+
+### Fixed
+- **TLS (`src/`)**: enable automatic DH parameters and the P-521 curve, retry automatically, and unify the SNI callbacks.
+
+### Changed
+- **Libstele Substrate Integration**:
+  - Replaced legacy references with libstele `stl_*` interfaces across POSIX, server, and test harness code.
+
 ## [1.7.0]
 
 - **Canonical Browser WebSocket Bridge (`htdocs/axil-bridge.js`)**:

@@ -81,7 +81,7 @@
 #include "../include/ws.h"
 
 #include <ttypt/corm.h>
-#include <ttypt/qsys.h>
+#include <ttypt/stele.h>
 
 #include "ws.c"
 
@@ -1642,11 +1642,13 @@ SSL_CTX *axil_ctx_new(char *crt, char *key)
 	CBUG(!ctx, "SSL_CTX_new\n");
 
 	SSL_CTX_set_alpn_select_cb(ctx, axil_alpn_select, NULL);
+	SSL_CTX_set_tlsext_servername_callback(ctx, axil_sni);
 
 	CBUG(!SSL_CTX_set_min_proto_version(ctx, TLS1_2_VERSION),
 	     "set_min_proto_version\n");
 
-	SSL_CTX_set_options(ctx, SSL_OP_NO_SSLv2 | SSL_OP_NO_SSLv3);
+	SSL_CTX_set_options(ctx, SSL_OP_NO_SSLv2 | SSL_OP_NO_SSLv3 | SSL_OP_CIPHER_SERVER_PREFERENCE);
+	SSL_CTX_set_mode(ctx, SSL_MODE_AUTO_RETRY);
 
 	CBUG(!SSL_CTX_set_cipher_list(
 	             ctx, "ECDHE+AESGCM:ECDHE+CHACHA20:!aNULL:!MD5:!RC4"),
@@ -1657,11 +1659,12 @@ SSL_CTX *axil_ctx_new(char *crt, char *key)
 	             "TLS_AES_128_GCM_SHA256:"
 	             "TLS_CHACHA20_POLY1305_SHA256");
 
-	CBUG(!SSL_CTX_set1_groups_list(ctx, "X25519:P-256:P-384"),
+	CBUG(!SSL_CTX_set1_groups_list(ctx, "X25519:P-256:P-384:P-521"),
 	     "set1_groups_list\n");
 
 #if OPENSSL_VERSION_NUMBER >= 0x10100000L
 	SSL_CTX_set_ecdh_auto(ctx, 1);
+	SSL_CTX_set_dh_auto(ctx, 1);
 #else
 	FILE *fp = fopen("/etc/ssl/dhparam.pem", "r");
 	CBUG(!fp, "open dhparam.pem\n");
@@ -1707,7 +1710,7 @@ static void axil_init(void)
 	axil_srv_flags |= axil_config.flags | AXIL_WAKE;
 
 	if ((axil_srv_flags & AXIL_DETACH))
-		qsyslog = qsys_syslog;
+		stllog_set(stl_syslog);
 
 	if (axil_srv_flags & AXIL_SSL) {
 
@@ -1716,11 +1719,7 @@ static void axil_init(void)
 		OpenSSL_add_all_algorithms();
 
 		const cert_t *cert = corm_get(cert_hd, domain_default);
-
-		default_ssl_ctx = axil_ctx_new(cert->crt, cert->key);
-
-		SSL_CTX_set_tlsext_servername_callback(
-		        default_ssl_ctx, axil_sni);
+		default_ssl_ctx = cert->ctx;
 
 		ERR_print_errors_cb(openssl_error_callback, NULL);
 	}
@@ -1950,7 +1949,8 @@ static char *env_sane(char *str)
 	     (((unsigned char)*str >= 0x80) || isalnum((unsigned char)*str) ||
 	      *str == '/' || *str == '+' || *str == '%' || *str == '&' ||
 	      *str == '_' || *str == '-' || *str == ' ' || *str == '=' ||
-	      *str == ';' || *str == '.' || *str == '"');
+	      *str == ';' || *str == '.' || *str == '"' || *str == ':' ||
+	      *str == ',' || *str == '@' || *str == '~');
 	     str++, b++)
 		*b = *str;
 	*b = '\0';
@@ -1965,7 +1965,7 @@ int axil_env_get(socket_t fd, char *target, size_t dest_len, char *key)
 	if (!skey)
 		return 1;
 
-	qsys_strlcpy(target, (const char *)skey, dest_len);
+	stl_strlcpy(target, (const char *)skey, dest_len);
 	return 0;
 }
 
@@ -2208,7 +2208,7 @@ static void http_date(time_t t, char *out, size_t outlen)
 	}
 
 	struct tm tm_buf;
-	struct tm *tm_info = qsys_gmtime_r(&t, &tm_buf);
+	struct tm *tm_info = stl_gmtime_r(&t, &tm_buf);
 	if (tm_info) {
 		strftime(out, outlen, "%a, %d %b %Y %H:%M:%S GMT", tm_info);
 		if (outlen >= sizeof(cached_date)) {
@@ -2556,13 +2556,12 @@ static inline int request_handle_redirect(socket_t fd, char *document_uri)
 static inline void
 request_handle_autoindex(socket_t fd, const char *uri_path, const char *fs_path)
 {
-	char body[BUFSIZ * 8]; // 8KB buffer for the HTML body
+	size_t body_cap = BUFSIZ * 8;
+	char *body;
 	char line[BUFSIZ * 2];
 	size_t body_len = 0;
 	DIR *dir;
 	struct dirent *entry;
-
-	memset(body, 0, sizeof(body));
 
 	dir = opendir(fs_path);
 	if (!dir) {
@@ -2572,33 +2571,51 @@ request_handle_autoindex(socket_t fd, const char *uri_path, const char *fs_path)
 		return;
 	}
 
+	body = calloc(1, body_cap);
+	if (!body) {
+		closedir(dir);
+		static_write(
+		        fd, "500 Internal Server Error", "text/plain", -1, 27,
+		        "", "", "");
+		return;
+	}
+
 	// Start building the HTML body
-	body_len = snprintf(
-	        body, sizeof(body),
+	body_len = (size_t)snprintf(
+	        body, body_cap,
 	        "<!DOCTYPE html><html><head><title>Index of %s</title></head>"
 	        "<body><h1>Index of %s</h1><hr><pre>",
 	        uri_path, uri_path);
 
 	while ((entry = readdir(dir)) != NULL) {
+		size_t line_len;
+
 		if (strcmp(entry->d_name, ".") == 0 ||
 		    strcmp(entry->d_name, "..") == 0)
 			continue;
 
-		snprintf(
+		line_len = (size_t)snprintf(
 		        line, sizeof(line), "<a href=\"./%s\">%s</a>\n",
 		        entry->d_name, entry->d_name);
+		if (line_len >= sizeof(line))
+			continue;
 
-		// Append to body, checking buffer size
-		if (body_len + strlen(line) < sizeof(body) - 20)
-		{ // Keep some safety margin
-			strcat(body, line);
-			body_len += strlen(line);
+		if (body_len + line_len + 32 >= body_cap) {
+			size_t new_cap = body_cap * 2;
+			char *grown = realloc(body, new_cap);
+			if (!grown)
+				break;
+			body = grown;
+			body_cap = new_cap;
 		}
+
+		memcpy(body + body_len, line, line_len + 1);
+		body_len += line_len;
 	}
 	closedir(dir);
 
-	strcat(body, "</pre><hr></body></html>");
-	body_len += 26;
+	memcpy(body + body_len, "</pre><hr></body></html>", 25);
+	body_len += 24;
 
 	// Write HTTP headers and the generated body
 	time_t now = time(NULL);
@@ -2616,6 +2633,7 @@ request_handle_autoindex(socket_t fd, const char *uri_path, const char *fs_path)
 	        "Connection: close\r\n" AXIL_CROSS_ORIGIN_HEADERS "\r\n",
 	        date, body_len);
 	axil_write(fd, body, body_len);
+	free(body);
 
 	struct descr *d = &descr_map[fd];
 	if ((d->flags & DF_TO_CLOSE) && !d->remaining_len)

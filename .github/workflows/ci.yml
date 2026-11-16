@@ -12,21 +12,12 @@ jobs:
       name: axil
       deps: "libcorm,libxylem,libssl-dev"
       deps_apk: "libcorm,libxylem,openssl-dev"
-      deps_pacman: "libcorm,libxylem,openssl"
+      deps_pacman: "libstele,libcorm,libxylem"
       deps_pacman_mingw: "mingw-w64-libcorm,mingw-w64-libxylem,mingw-w64-openssl,mingw-w64-libiconv"
       deps_rpm: "libcorm,libxylem,openssl-devel"
       deps_brew: "libcorm,libxylem,openssl"
-      deps_openbsd: "libcorm,libxylem,openssl"
-      deps_winget: "mingw-w64-x86_64-openssl,mingw-w64-x86_64-libiconv"
-      deps_winget_tty: "libqsys,libcorm,libxylem"
-      publish_to: "deb,apk,rpm,brew,openbsd,winget"
-    secrets:
-      HOST: ${{ secrets.OPENBSD_HOST }}
-      USER: ${{ secrets.OPENBSD_USER }}
-      SSH_KEY: ${{ secrets.OPENBSD_SSH_KEY }}
-      GPG_PRIVATE_KEY: ${{ secrets.OPENBSD_GPG_PRIVATE_KEY }}
-      GPG_PASSPHRASE: ${{ secrets.OPENBSD_GPG_PASSPHRASE }}
-      GPG_KEYID: ${{ secrets.OPENBSD_GPG_KEY_ID }}
-      ABUILD_PRIVATE_KEY: ${{ secrets.ABUILD_PRIVATE_KEY }}
-      ABUILD_PUBLIC_KEY: ${{ secrets.ABUILD_PUBLIC_KEY }}
-      TAP_TOKEN: ${{ secrets.TAP_TOKEN }}
+      deps_openbsd: "libstele,libcorm,libxylem"
+      deps_winget: "mingw-w64-x86_64-openssl,mingw-w64-x86_64-libiconv,mingw-w64-x86_64-xxhash"
+      deps_winget_tty: "libstele,libcorm,libxylem"
+      publish_to: "deb,apk,rpm,pacman,brew,openbsd,winget"
+    secrets: inherit

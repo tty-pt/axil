@@ -15,7 +15,7 @@
 #include <string.h>
 #include <sys/types.h>
 #include <unistd.h>
-#include <ttypt/qsys.h>
+#include <ttypt/stele.h>
 
 /* The 7-bit payload length field doubles as a form selector: below 126 it is
  * the length itself, and 126/127 select the 2-/8-byte extended forms. */

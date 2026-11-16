@@ -101,7 +101,7 @@
 #include <unistd.h>
 #include <signal.h>
 
-#include <ttypt/qsys.h>
+#include <ttypt/stele.h>
 #include <ttypt/corm.h>
 #include <ttypt/xy.h>
 
@@ -137,7 +137,7 @@ void exit_all(int i) {
 	// close databases here
 	on_axil_exit(i);
 
-	qsys_closelog();
+	stl_closelog();
 #ifndef _WIN32
 	sync();
 #endif
@@ -153,8 +153,8 @@ void exit_all(int i) {
 static void
 segv_fault(int sig) {
 	signal(sig, SIG_DFL);
-	qsys_syslog(QLOG_ERR, "fatal signal %d -- dumping core", sig);
-	qsys_closelog();
+	stl_syslog(STL_LOG_ERR, "fatal signal %d -- dumping core", sig);
+	stl_closelog();
 	raise(sig);
 	_exit(128 + sig);
 }
@@ -177,12 +177,13 @@ usage(char *prog) {
 }
 
 int
-main(int argc, char *argv[])
+axil_cli(int argc, char *argv[])
 {
-	register char c;
+	register int c;
 	char *mods = NULL;
 
-	qsys_openlog("axil");
+	optind = 1;
+	stl_openlog("axil");
 
 	axil_config.flags |= AXIL_DETACH;
 
@@ -259,6 +260,14 @@ main(int argc, char *argv[])
 
 	return 0;
 }
+
+#ifndef AXIL_NO_MAIN
+int
+main(int argc, char *argv[])
+{
+	return axil_cli(argc, argv);
+}
+#endif
 
 static int find_cookie_val(const char *cookie, const char *name, char *out, size_t out_len) {
 	if (!cookie || !name || !out || out_len == 0) return -1;
