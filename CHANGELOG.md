@@ -1,8 +1,17 @@
+## [1.8.3] - 2026-11-16
+
+### Fixed
+- **Dynamic Directory Autoindex Buffer & `Content-Length` Framing (`src/libaxil.c`)**:
+  - Replaced the fixed 8 KB stack buffer in `request_handle_autoindex()` with a dynamically growing heap buffer (`calloc`/`realloc`) so directories with many entries never silently drop trailing links.
+  - Fixed the 2-byte `Content-Length` overcount (`body_len += 24` instead of `26` for `"</pre><hr></body></html>"`) that caused HTTP clients to hang waiting for 2 unreceived bytes on autoindex responses.
+- **OpenBSD Packaging Dependencies (`.github/workflows/ci.yml`)**:
+  - Added `libstele` to `deps_openbsd` (`libstele,libcorm,libxylem`) and rebuilt OpenBSD package against `libxylem` `1.8.1` and `libstele` `1.7.1`.
+
 ## [1.8.2] - 2026-11-16
 
 ### Changed
 - **Arch Linux (`pacman`) Packaging (`.github/workflows/ci.yml`)**:
-  - Added `pacman` to `publish_to` and `libstele` to `deps_pacman` so `axil` publishes across all 7 OS targets (`deb`, `apk`, `rpm`, `pacman`, `brew`, `openbsd`, `winget`).
+  - Added `pacman` to `publish_to` and `libstele` to `deps_pacman` (`libstele,libcorm,libxylem`, omitting `openssl` to avoid container partial-upgrade `libssl.so.3` mismatches) so `axil` publishes across all 7 OS targets (`deb`, `apk`, `rpm`, `pacman`, `brew`, `openbsd`, `winget`).
 
 ## [1.8.1] - 2026-11-15
 
