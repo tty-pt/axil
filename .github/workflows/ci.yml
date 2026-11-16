@@ -16,7 +16,7 @@ jobs:
       deps_pacman_mingw: "mingw-w64-libcorm,mingw-w64-libxylem,mingw-w64-openssl,mingw-w64-libiconv"
       deps_rpm: "libcorm,libxylem,openssl-devel"
       deps_brew: "libcorm,libxylem,openssl"
-      deps_openbsd: "libcorm,libxylem,openssl"
+      deps_openbsd: "libstele,libcorm,libxylem"
       deps_winget: "mingw-w64-x86_64-openssl,mingw-w64-x86_64-libiconv,mingw-w64-x86_64-xxhash"
       deps_winget_tty: "libstele,libcorm,libxylem"
       publish_to: "deb,apk,rpm,pacman,brew,openbsd,winget"

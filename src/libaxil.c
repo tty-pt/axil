@@ -2556,13 +2556,12 @@ static inline int request_handle_redirect(socket_t fd, char *document_uri)
 static inline void
 request_handle_autoindex(socket_t fd, const char *uri_path, const char *fs_path)
 {
-	char body[BUFSIZ * 8]; // 8KB buffer for the HTML body
+	size_t body_cap = BUFSIZ * 8;
+	char *body;
 	char line[BUFSIZ * 2];
 	size_t body_len = 0;
 	DIR *dir;
 	struct dirent *entry;
-
-	memset(body, 0, sizeof(body));
 
 	dir = opendir(fs_path);
 	if (!dir) {
@@ -2572,33 +2571,51 @@ request_handle_autoindex(socket_t fd, const char *uri_path, const char *fs_path)
 		return;
 	}
 
+	body = calloc(1, body_cap);
+	if (!body) {
+		closedir(dir);
+		static_write(
+		        fd, "500 Internal Server Error", "text/plain", -1, 27,
+		        "", "", "");
+		return;
+	}
+
 	// Start building the HTML body
-	body_len = snprintf(
-	        body, sizeof(body),
+	body_len = (size_t)snprintf(
+	        body, body_cap,
 	        "<!DOCTYPE html><html><head><title>Index of %s</title></head>"
 	        "<body><h1>Index of %s</h1><hr><pre>",
 	        uri_path, uri_path);
 
 	while ((entry = readdir(dir)) != NULL) {
+		size_t line_len;
+
 		if (strcmp(entry->d_name, ".") == 0 ||
 		    strcmp(entry->d_name, "..") == 0)
 			continue;
 
-		snprintf(
+		line_len = (size_t)snprintf(
 		        line, sizeof(line), "<a href=\"./%s\">%s</a>\n",
 		        entry->d_name, entry->d_name);
+		if (line_len >= sizeof(line))
+			continue;
 
-		// Append to body, checking buffer size
-		if (body_len + strlen(line) < sizeof(body) - 20)
-		{ // Keep some safety margin
-			strcat(body, line);
-			body_len += strlen(line);
+		if (body_len + line_len + 32 >= body_cap) {
+			size_t new_cap = body_cap * 2;
+			char *grown = realloc(body, new_cap);
+			if (!grown)
+				break;
+			body = grown;
+			body_cap = new_cap;
 		}
+
+		memcpy(body + body_len, line, line_len + 1);
+		body_len += line_len;
 	}
 	closedir(dir);
 
-	strcat(body, "</pre><hr></body></html>");
-	body_len += 26;
+	memcpy(body + body_len, "</pre><hr></body></html>", 25);
+	body_len += 24;
 
 	// Write HTTP headers and the generated body
 	time_t now = time(NULL);
@@ -2616,6 +2633,7 @@ request_handle_autoindex(socket_t fd, const char *uri_path, const char *fs_path)
 	        "Connection: close\r\n" AXIL_CROSS_ORIGIN_HEADERS "\r\n",
 	        date, body_len);
 	axil_write(fd, body, body_len);
+	free(body);
 
 	struct descr *d = &descr_map[fd];
 	if ((d->flags & DF_TO_CLOSE) && !d->remaining_len)
