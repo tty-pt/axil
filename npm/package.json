@@ -54,7 +54,7 @@
     "web-hal",
     "napi"
   ],
-  "author": "Paulo Quirino",
+  "author": "Paulo Quirino <quirinpa@gmail.com>",
   "license": "BSD-2-Clause",
   "repository": {
     "type": "git",
