@@ -1,3 +1,9 @@
+## [1.8.2] - 2026-11-16
+
+### Changed
+- **Arch Linux (`pacman`) Packaging (`.github/workflows/ci.yml`)**:
+  - Added `pacman` to `publish_to` and `libstele` to `deps_pacman` so `axil` publishes across all 7 OS targets (`deb`, `apk`, `rpm`, `pacman`, `brew`, `openbsd`, `winget`).
+
 ## [1.8.1] - 2026-11-15
 
 ### Added
