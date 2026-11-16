@@ -1,8 +1,10 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { dirname, join } from "node:path";
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
 import {
   AxilClient,
   createAxilBridge,
@@ -12,6 +14,7 @@ import {
   urlDecode,
   jsonEscape,
   slugify,
+  resolveModulePath,
   normalizeCliArgs,
 } from "../dist/index.js";
 import { createAxilBridge as createAxilBridgeDirect } from "../dist/bridge.js";
@@ -143,9 +146,33 @@ test("N-API native bindings and CLI helpers", () => {
   assert.equal(args[3], "-m");
   assert.ok(args[4].includes("libaxil-auren"));
 
-  const multiArgs = normalizeCliArgs(["-m", "auth:hyle"]);
-  assert.ok(multiArgs[1].includes("libaxil-auth"));
-  assert.ok(multiArgs[1].includes("libaxil-hyle"));
+  const tmpRoot = mkdtempSync(join(tmpdir(), "axil-mod-test-"));
+  try {
+    const fakeCallerDir = join(tmpRoot, "axil", "dist");
+    const fakeAuthLibDir = join(tmpRoot, "axil-auth", "lib");
+    const fakeAxilHyleLibDir = join(tmpRoot, "axil-hyle", "lib");
+    const fakeHyleLibDir = join(tmpRoot, "hyle", "lib");
+    mkdirSync(fakeCallerDir, { recursive: true });
+    mkdirSync(fakeAuthLibDir, { recursive: true });
+    mkdirSync(fakeAxilHyleLibDir, { recursive: true });
+    mkdirSync(fakeHyleLibDir, { recursive: true });
+    writeFileSync(join(fakeAuthLibDir, "libaxil-auth.so"), "");
+    writeFileSync(join(fakeAxilHyleLibDir, "libaxil-hyle.so"), "");
+    writeFileSync(join(fakeHyleLibDir, "libhyle.so"), "");
+    const fakeCallerUrl = pathToFileURL(join(fakeCallerDir, "index.js")).href;
+
+    const resolvedHyle = resolveModulePath("hyle", fakeCallerUrl);
+    assert.ok(
+      resolvedHyle.endsWith("libaxil-hyle"),
+      `expected 'hyle' to resolve to libaxil-hyle over libhyle, got ${resolvedHyle}`
+    );
+
+    const multiArgs = normalizeCliArgs(["-m", "auth:hyle"], fakeCallerUrl);
+    assert.ok(multiArgs[1].includes("libaxil-auth"));
+    assert.ok(multiArgs[1].includes("libaxil-hyle"));
+  } finally {
+    rmSync(tmpRoot, { recursive: true, force: true });
+  }
 
   const here = dirname(fileURLToPath(import.meta.url));
   const binPath = join(here, "..", "bin", "axil.js");
