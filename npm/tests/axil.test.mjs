@@ -143,6 +143,10 @@ test("N-API native bindings and CLI helpers", () => {
   assert.equal(args[3], "-m");
   assert.ok(args[4].includes("libaxil-auren"));
 
+  const multiArgs = normalizeCliArgs(["-m", "auth:hyle"]);
+  assert.ok(multiArgs[1].includes("libaxil-auth"));
+  assert.ok(multiArgs[1].includes("libaxil-hyle"));
+
   const here = dirname(fileURLToPath(import.meta.url));
   const binPath = join(here, "..", "bin", "axil.js");
   const helpRes = spawnSync(process.execPath, [binPath, "-?"], { encoding: "utf8" });

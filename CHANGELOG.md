@@ -1,3 +1,9 @@
+## [1.8.4] - 2026-11-16
+
+### Fixed
+- **Xylem Module Resolution Priority (`npm/dist/index.js`)**:
+  - Updated `resolveModulePath()` to prioritize `libaxil-<shortName>` and `@tty-pt/axil-<shortName>` over base `@tty-pt/<shortName>` packages so `-m hyle` / `-m axil-hyle` and `-m auth` / `-m axil-auth` resolve to `libaxil-hyle` and `libaxil-auth` rather than `libhyle`.
+
 ## [1.8.3] - 2026-11-16
 
 ### Fixed

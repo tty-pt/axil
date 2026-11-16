@@ -62,10 +62,10 @@ export function resolveModulePath(modSpec, callerImportMetaUrl = import.meta.url
     const base = path.basename(stem);
     const shortName = base.replace(/^lib/, "").replace(/^axil-/, "");
     const libNames = Array.from(
-      new Set([base, `libaxil-${shortName}`, `lib${shortName}`])
+      new Set([`libaxil-${shortName}`, base, `lib${shortName}`])
     );
     const pkgCandidates = Array.from(
-      new Set([`@tty-pt/${shortName}`, `@tty-pt/axil-${shortName}`])
+      new Set([`@tty-pt/axil-${shortName}`, `@tty-pt/${shortName}`])
     );
 
     const searchDirs = [];
@@ -83,7 +83,7 @@ export function resolveModulePath(modSpec, callerImportMetaUrl = import.meta.url
       } catch {}
     }
 
-    for (const sub of [shortName, `axil-${shortName}`]) {
+    for (const sub of [`axil-${shortName}`, shortName]) {
       const siblingPkg = path.resolve(callerDir, "..", "..", sub);
       for (const k of keys) addDir(path.join(siblingPkg, "prebuilds", k));
       addDir(path.join(siblingPkg, "build", "Release"));
@@ -92,7 +92,7 @@ export function resolveModulePath(modSpec, callerImportMetaUrl = import.meta.url
     }
 
     const cwd = process.cwd();
-    for (const sub of [shortName, `axil-${shortName}`]) {
+    for (const sub of [`axil-${shortName}`, shortName]) {
       for (const k of keys) {
         addDir(path.join(cwd, "node_modules", "@tty-pt", sub, "prebuilds", k));
       }
@@ -101,8 +101,8 @@ export function resolveModulePath(modSpec, callerImportMetaUrl = import.meta.url
     }
     addDir(path.join(cwd, "lib"));
 
-    for (const dir of searchDirs) {
-      for (const libName of libNames) {
+    for (const libName of libNames) {
+      for (const dir of searchDirs) {
         const cand = path.join(dir, libName);
         if (hasModuleBinary(cand, fs)) {
           return cand;

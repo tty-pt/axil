@@ -1,6 +1,6 @@
 {
   "name": "@tty-pt/axil",
-  "version": "1.8.3",
+  "version": "1.8.4",
   "type": "module",
   "description": "Universal Node.js and Browser client and N-API daemon host for axil network transport and persistent socket multiplexing",
   "main": "dist/index.js",
