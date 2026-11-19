@@ -346,6 +346,7 @@ void *axil_respond_defer(socket_t fd, int code)
 		return NULL;
 
 	axil_default_response_headers(fd);
+	axil_header_set_default(fd, "Connection", "close");
 
 	hlen = snprintf(hdr, sizeof(hdr), "HTTP/1.1 %d %s\r\n%s\r\n",
 			code, axil_status_text(code), d->resp_headers);
@@ -1258,6 +1259,19 @@ static int descr_read(socket_t fd)
 
 	if (!(d->flags & DF_ACCEPTED))
 		return 0;
+
+	/* While a deferred response is in flight, do not read into the global
+	 * input buffer or dispatch another request on this socket. Drain/check
+	 * only to detect client disconnect (EOF / error). */
+	if (d->flags & DF_DEFERRED) {
+		char discard[256];
+		ssize_t n = io[fd].read(fd, discard, sizeof(discard), 0);
+		if (n > 0)
+			return 0;
+		if (n < 0 && (errno == EAGAIN || errno == EWOULDBLOCK))
+			return 0;
+		return -1;
+	}
 
 	/* A frame is handled before axil_read(), not after: on DF_WEBSOCKET that
 	 * path assembles the frame in a buffer of its own and returns only the
