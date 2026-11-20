@@ -31,7 +31,7 @@ libaxil-obj-y-OpenBSD := src/axil-posix.o
 libaxil-obj-y-Msys := src/axil-win.o
 libaxil-obj-y-MingW := src/axil-win.o
 libaxil-obj-y-MinGW64 := src/axil-win.o
-libaxil-obj-y := src/axil-status.o src/axil-encode.o
+libaxil-obj-y := src/axil-status.o src/axil-encode.o src/axil-tls.o src/axil-query.o src/axil-http.o
 
 -include ../mk/include.mk
 
